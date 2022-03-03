@@ -82,6 +82,7 @@ void processINFO_ACK(UDP packet);
 void processINFO_NACK(UDP packet);
 bool correctServerData(UDP packet);
 char* getTypeOfPacket(UDP packet);
+void setupServAddr();
 
 //  Global variables
 bool debug_mode = false;
@@ -108,6 +109,7 @@ struct Server_Data {
     char Server[MAXIMUM_LINE_LENGTH];
     int Server_UDP;
     int Server_TCP;
+    int newServer_UDP;
 };
 
 //  Element struct
@@ -279,6 +281,7 @@ void login() {
     if (udpSock < 0) {
         createUDPSocket();
     }
+    setupServAddr();
     //  Initialization of the client status
     clientData.Status = NOT_REGISTERED;
     infoMsg("Client in status NOT_REGISTERED\n");
@@ -394,19 +397,21 @@ void createUDPSocket() {
         printf("Socket successfully created and bound.\n");
     }
 
-    // Set up the server address struct for receiving packets
-    memset(&serverAddr, 0, sizeof(struct sockaddr_in));
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(serverData.Server_UDP);
-    struct hostent *host = gethostbyname(serverData.Server);
-    serverAddr.sin_addr.s_addr = (((struct in_addr*) host->h_addr_list[0])->s_addr);
-
     if (debug_mode) {
         debugMsg();
         printf("Server address set to:\n"
                "IP: %s\n"
                "Port: %hu\n", inet_ntoa(serverAddr.sin_addr), ntohs(serverAddr.sin_port));
     }
+}
+
+void setupServAddr() {
+    // Set up the server address struct for receiving packets
+    memset(&serverAddr, 0, sizeof(struct sockaddr_in));
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(serverData.Server_UDP);
+    struct hostent *host = gethostbyname(serverData.Server);
+    serverAddr.sin_addr.s_addr = (((struct in_addr*) host->h_addr_list[0])->s_addr);
 }
 
 //  Receive the register packet through UDP
@@ -512,18 +517,18 @@ void processREG_ACK(UDP packet) {
         login();
         return;
     }
-    //  Copy the communication and server ID for securing network purposes
+    //  Copy the communication ID, the server ID and the server IP for securing network purposes
     strcpy(serverData.Id_Trans, packet.Id_Tans);
     strcpy(serverData.Id_Comm, packet.Id_Comm);
     char serverIP[MAXIMUM_LINE_LENGTH];
     strcpy(serverIP, inet_ntoa(serverAddr.sin_addr)); //  IP from network mode to string
     strcpy(serverData.Server, serverIP);
-    serverData.Server_UDP = strtol(packet.Data, NULL, 10);
+    serverData.newServer_UDP = strtol(packet.Data, NULL, 10);
 
     UDP REG_INFOPacket = buildREG_INFOPacket();
 
     // Modify the serverAddr struct for matching the new UDP port received from the server and continue with the communication through it
-    serverAddr.sin_port = htons(serverData.Server_UDP);
+    serverAddr.sin_port = htons(serverData.newServer_UDP);
 
     // Send the REG_INFO packet to the server
     if (sendto(udpSock, &REG_INFOPacket, sizeof(UDP), 0,
