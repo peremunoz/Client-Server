@@ -1,0 +1,3 @@
+/home/peremunoz/Escritorio/pra1xarxes/cmake-build-debug/CMakeFiles/rebuild_cache.dir
+/home/peremunoz/Escritorio/pra1xarxes/cmake-build-debug/CMakeFiles/edit_cache.dir
+/home/peremunoz/Escritorio/pra1xarxes/cmake-build-debug/CMakeFiles/pra1xarxes.dir
