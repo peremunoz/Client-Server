@@ -1,3 +1,9 @@
 
 *.xml
 cmake-build-debug
+client
+cmake-build-debug/.ninja_deps
+cmake-build-debug/.ninja_log
+*.o
+cmake-build-debug/pra1xarxes
+*.log

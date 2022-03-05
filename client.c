@@ -11,9 +11,10 @@
 #include <unistd.h>
 #include <sys/select.h>
 #include <signal.h>
+#include <pthread.h>
 
 
-//  Register-phase package types definitions
+//  Register-phase packet types definitions
 #define REG_REQ 0xa0
 #define REG_ACK 0xa1
 #define REG_NACK 0xa2
@@ -32,13 +33,22 @@
 #define REGISTERED 0xf5
 #define SEND_ALIVE 0xf6
 
+//  Periodic-communication packet definitions
+#define ALIVE 0xb0
+#define ALIVE_NACK 0xb1
+#define ALIVE_REJ 0xb2
+
 //  Some colors definitions for formatting purposes
 #define debugColorBold "\033[1;34m"
 #define debugColorNormal "\033[0;34m"
 #define errorColor "\033[0;31m"
+#define errorColorBold "\033[1;31m"
 #define resetColor "\033[0m"
 #define whiteBold "\033[1;37m"
 #define whiteNormal "\033[0;37m"
+#define yellow "\033[0;33m"
+#define green "\033[0;32m"
+#define greenBold "\033[1;32m"
 
 //  Constants
 #define MAXIMUM_LINE_LENGTH 255
@@ -48,6 +58,9 @@
 #define U 3
 #define O 4
 #define T 2
+#define V 3
+#define R 2
+#define S 3
 
 //  Structs pre-definitions
 typedef struct ElementStruct Element;
@@ -59,6 +72,7 @@ typedef struct UDP_PDU UDP;
 void checkParams(int argc, char* argv[]);
 bool correctFileName(char filename[]);
 void debugMsg();
+void errorMsg();
 void readCfg();
 void storeElements(char* line);
 void storeServer(char* line);
@@ -66,11 +80,11 @@ char* trimLine(char *buffer);
 void storeId(char* line);
 void storeLocal(char* line);
 void storeUDP(char* line);
-void createUDPSocket();
+void openUDPSocket();
 void login();
 void infoFormat();
 void infoMsg(char text[]);
-void processRegisterPacket();
+void receiveRegisterPacket();
 UDP buildREG_REQPacket();
 void signal_handler(int signal);
 void processREG_ACK(UDP packetReceived);
@@ -83,6 +97,19 @@ void processINFO_NACK(UDP packet);
 bool correctServerData(UDP packet);
 char* getTypeOfPacket(UDP packet);
 void setupServAddr();
+void periodicCommunication();
+UDP buildALIVEPacket();
+UDP receiveALIVEPacket();
+void sendALIVELoop();
+int existsElement(char* elemId);
+_Noreturn void handleTerminalInput();
+void openTCPSocket();
+void printCommands();
+void statCommand();
+void setCommand(char* token);
+void sendCommand();
+void quitCommand();
+char* readTerminal();
 
 //  Global variables
 bool debug_mode = false;
@@ -90,9 +117,11 @@ char clientCfgFile[] = "client.cfg";
 Client clientData;
 Server serverData;
 int udpSock = -1;
+int tcpSock = -1;
 int elementsNumber;
-struct sockaddr_in clientAddr, serverAddr;
+struct sockaddr_in clientAddrUDP, clientAddrTCP, serverAddr;
 bool continueWithSameRegisterProcess = false;
+pthread_t tId = (pthread_t) NULL;
 
 //  Client data struct
 struct Client_Data {
@@ -131,14 +160,16 @@ int main(int argc, char* argv[]) {
     checkParams(argc, argv);
     readCfg();
     login();
-    printf("SEND ALIVES!!\n");
     return 0;
 }
 
 void signal_handler(int signal) {
-    if (signal == SIGINT) {
-        infoMsg("CLOSING CLIENT... !!\n\n\n");
+    if (signal == SIGINT || signal == SIGTERM) {
+        infoMsg("CLOSING CLIENT...");
         close(udpSock);
+        close(tcpSock);
+        pthread_cancel(tId);
+        sleep(1);
         exit(0);
     }
 }
@@ -150,7 +181,8 @@ void checkParams(int argc, char* argv[]) {
             if (correctFileName(argv[i+1])) {
                 strcpy(clientCfgFile, argv[i+1]);
             } else {
-                printf(errorColor "Error in the filename, incorrect format. (filename.cfg)\n");
+                errorMsg();
+                printf("Error in the filename, incorrect format. (filename.cfg)");
                 exit(-1);
             }
         } else if (strcmp(argv[i], "-d") == 0) {
@@ -172,14 +204,19 @@ bool correctFileName(char filename[]) {
 }
 
 void debugMsg() {
-    printf( debugColorBold "[DEBUG] --> " debugColorNormal);
+    printf( debugColorBold "[DEBUG]\t=>\t" debugColorNormal);
+}
+
+void errorMsg() {
+    printf(errorColorBold "[ERROR]\t=>\t" errorColor);
 }
 
 //  Reads the clientData config file and assign its values to the attributes of the clientData or serverData structs
 void readCfg() {
     FILE* fd = fopen(clientCfgFile, "r");
     if (fd == NULL) {
-        perror(errorColor "Error opening the client cfg file");
+        errorMsg();
+        perror("Error opening the client cfg file");
         exit(-1);
     }
     char line[MAXIMUM_LINE_LENGTH];
@@ -222,7 +259,7 @@ void storeElements(char* line) {
     int index = 0;
     while (token != NULL) {
         Element *element = malloc(sizeof(Element));
-        memset(element, 0, sizeof(Element));
+        memset(element, '\0', sizeof(Element));
         strcpy(element->Id, token);
         token = strtok(NULL, ";");
         clientData.Elements[index] = element;
@@ -279,7 +316,7 @@ char* trimLine(char *buffer) {
 void login() {
     //  We have udpSock globally pre-initialized at -1. With this, we ensure that socket is created only one time
     if (udpSock < 0) {
-        createUDPSocket();
+        openUDPSocket();
     }
     setupServAddr();
     //  Initialization of the client status
@@ -291,7 +328,8 @@ void login() {
     //  Send first register packet
     if (sendto(udpSock, &registerPacket, sizeof(UDP), 0,
                (struct sockaddr *) &serverAddr, (socklen_t) sizeof(serverAddr)) < 0) {
-        perror(errorColor "Error sending the UDP register packet");
+        errorMsg();
+        perror("Error sending the UDP register packet");
         exit(-1);
     }
     if (debug_mode) {
@@ -310,7 +348,7 @@ void login() {
         acc = 0;
         if(debug_mode) {
             debugMsg();
-            printf(debugColorNormal "New register process: number %i\n" resetColor, sign_ups);
+            printf("New register process: number %i\n" resetColor, sign_ups);
         }
         for (int packetsPerSignup = 0; packetsPerSignup < N; packetsPerSignup++) {   // Number of packets for every register process
             // Every packet sent we re-initialize the timeval for preventing it to get stuck at 0
@@ -324,7 +362,7 @@ void login() {
             FD_ZERO(&read_fds);
             FD_SET(udpSock, &read_fds);
             if (select(udpSock + 1, &read_fds, NULL, NULL, &t)) {   // If we receive a packet, process it
-                processRegisterPacket();
+                receiveRegisterPacket();
                 // By default, we exit de login function unless we have to keep going in the same register process
                 if (!continueWithSameRegisterProcess) {
                     return;
@@ -333,7 +371,8 @@ void login() {
             // If not, send another packet
             if (sendto(udpSock, &registerPacket, sizeof(UDP), 0,
                        (struct sockaddr *) &serverAddr, (socklen_t) sizeof(serverAddr)) < 0) {
-                perror(errorColor "Error sending the UDP register packet");
+                errorMsg();
+                perror("Error sending the UDP register packet");
                 exit(-1);
             }
             if (debug_mode) {
@@ -351,7 +390,8 @@ void login() {
         }
         sleep(U);   // Wait U seconds before starting another register process
     }
-    printf(errorColor "[ERROR] --> Can't connect to the server\n");
+    errorMsg();
+    printf("Can't connect to the server");
     exit(-1);
 }
 
@@ -366,29 +406,35 @@ UDP buildREG_REQPacket() {
 }
 
 void infoFormat() {
-    printf(whiteBold "[INFO] => " whiteNormal);
+    printf(whiteBold "[INFO]\t=> " whiteNormal);
 }
 
 void infoMsg(char text[]) {
-    printf(whiteBold "[INFO] => " whiteNormal "%s" resetColor, text);
+    printf(whiteBold "[INFO]\t=>\t" whiteNormal "%s" resetColor, text);
+}
+
+void okMsg() {
+    printf(greenBold "[OK]\t=>\t" green);
 }
 
 //  Creates the UDP Socket
-void createUDPSocket() {
+void openUDPSocket() {
     udpSock = socket(AF_INET, SOCK_DGRAM, 0);
     if (udpSock < 0) {
-        perror(errorColor "Error creating the UDP socket");
+        errorMsg();
+        perror("Error creating the UDP socket");
         exit(-1);
     }
     //  Set up the client address for the socket (sockaddr_in struct)
-    memset(&clientAddr, 0, sizeof (struct sockaddr_in));
-    clientAddr.sin_family = AF_INET;
-    clientAddr.sin_port = htons(0);
-    clientAddr.sin_addr.s_addr = (INADDR_ANY);
+    memset(&clientAddrUDP, 0, sizeof (struct sockaddr_in));
+    clientAddrUDP.sin_family = AF_INET;
+    clientAddrUDP.sin_port = htons(0);
+    clientAddrUDP.sin_addr.s_addr = (INADDR_ANY);
 
     //  Bind the socket to the address set up before
-    if (bind(udpSock, (const struct sockaddr *) &clientAddr, sizeof (struct sockaddr_in)) < 0) {
-        perror(errorColor "Error binding the UDP socket");
+    if (bind(udpSock, (const struct sockaddr *) &clientAddrUDP, sizeof (struct sockaddr_in)) < 0) {
+        errorMsg();
+        perror("Error binding the UDP socket");
         exit(-1);
     }
 
@@ -415,14 +461,15 @@ void setupServAddr() {
 }
 
 //  Receive the register packet through UDP
-void processRegisterPacket() {
+void receiveRegisterPacket() {
     UDP packet;
     socklen_t serverAddrSize = sizeof(serverAddr);
-    long sizeReceived = 0;
-    sizeReceived += recvfrom(udpSock, &packet, sizeof(UDP), MSG_WAITALL,
-                             (struct sockaddr *) &serverAddr, &serverAddrSize);
+    long sizeReceived;
+    sizeReceived = recvfrom(udpSock, &packet, sizeof(UDP), MSG_WAITALL,
+                            (struct sockaddr *) &serverAddr, &serverAddrSize);
     if (sizeReceived < 0) {
-        perror(errorColor "Error receiving the UDP register packet");
+        errorMsg();
+        perror("Error receiving the UDP register packet");
         exit(-1);
     }
     if (debug_mode) {
@@ -444,6 +491,10 @@ char* getTypeOfPacket(UDP packet) {
         return charPointer="INFO_ACK";
     } else if (packet.Type == INFO_NACK) {
         return charPointer="INFO_NACK";
+    } else if (packet.Type == ALIVE) {
+        return charPointer="ALIVE";
+    } else if (packet.Type == ALIVE_REJ) {
+        return charPointer="ALIVE_REJ";
     }
     return NULL;
 }
@@ -468,11 +519,13 @@ void processPacketType(UDP packet) {
 //  Process an INFO_NACK-type packet
 void processINFO_NACK(UDP packet) {
     if (clientData.Status != WAIT_ACK_INFO && !correctServerData(packet)) {
-        infoMsg("Wrong client status or wrong packet!!");
+        errorMsg();
+        printf("Wrong client status or wrong packet!!");
         login();
+        return;
     }
     clientData.Status = NOT_REGISTERED;
-    infoMsg("Client in state NOT_REGISTERED\n");
+    infoMsg("Client in status NOT_REGISTERED\n");
     continueWithSameRegisterProcess = true;
 }
 
@@ -489,13 +542,15 @@ bool correctServerData(UDP packet) {
 //  Process an INFO_ACK-type packet
 void processINFO_ACK(UDP packet) {
     if (clientData.Status != WAIT_ACK_INFO || !correctServerData(packet)) {
-        infoMsg(errorColor "Wrong client status or wrong packet!!\n");
+        errorMsg();
+        printf("Wrong client status or wrong packet!!\n");
         login();
         return;
     }
     clientData.Status = REGISTERED;
     infoMsg("Client in status REGISTERED\n");
     serverData.Server_TCP = strtol(packet.Data, NULL, 10);
+    periodicCommunication();
 }
 
 //  Process a REG_REJ-type packet
@@ -513,7 +568,8 @@ void processREG_NACK(UDP packet) {
 //  Process a REG_ACK-type packet
 void processREG_ACK(UDP packet) {
     if (clientData.Status != WAIT_ACK_REG) {
-        infoMsg("Wrong client status or wrong packet!!\n");
+        errorMsg();
+        printf("Wrong client status or wrong packet!!\n");
         login();
         return;
     }
@@ -533,7 +589,8 @@ void processREG_ACK(UDP packet) {
     // Send the REG_INFO packet to the server
     if (sendto(udpSock, &REG_INFOPacket, sizeof(UDP), 0,
                (struct sockaddr *) &serverAddr, (socklen_t) sizeof(serverAddr)) < 0) {
-        perror(errorColor "Error sending the UDP REG_INFO packet");
+        errorMsg();
+        perror("Error sending the UDP REG_INFO packet");
         exit(-1);
     }
 
@@ -557,7 +614,8 @@ void processREG_ACK(UDP packet) {
             sizeReceived += recvfrom(udpSock, &packet, sizeof(UDP), 0,
                                      (struct sockaddr *) &serverAddr, &serverAddrSize);
             if (sizeReceived < 0) {
-                perror(errorColor "Error receiving the UDP INFO_ACK packet");
+                errorMsg();
+                perror("Error receiving the UDP INFO_ACK packet");
                 exit(-1);
             }
         }
@@ -597,4 +655,235 @@ UDP buildREG_INFOPacket() {
     strcpy(packet.Data, data);
 
     return packet;
+}
+
+void periodicCommunication() {
+    UDP ALIVEPacket = buildALIVEPacket();
+    setupServAddr();    //  Reset server address for periodic communication
+    if (sendto(udpSock, &ALIVEPacket, sizeof(UDP), 0,
+               (const struct sockaddr *) &serverAddr, sizeof(serverAddr)) < 0) {
+        errorMsg();
+        perror("Error sending ALIVE packet");
+        exit(-1);
+    }
+    sleep(V);
+    if (debug_mode) {
+        debugMsg();
+        printf("UDP packet type %s sent correctly.\n" resetColor, getTypeOfPacket(ALIVEPacket));
+    }
+    struct timeval t;
+    t.tv_sec = R*V;
+    t.tv_usec = 0;
+    fd_set read_fds;
+    FD_ZERO(&read_fds);
+    FD_SET(udpSock, &read_fds);
+    if (select(udpSock + 1, &read_fds, NULL, NULL, &t)) {
+        UDP packet = receiveALIVEPacket();
+        if (packet.Type == ALIVE && correctServerData(packet) && strcmp(clientData.Id, packet.Data) == 0) {
+            sendALIVELoop();
+            return;
+        }
+    }
+    //  Packet not received in R*T seconds or incorrect packet
+    errorMsg();
+    printf("First ALIVE not received or incorrect packet\n");
+    login();
+}
+
+UDP receiveALIVEPacket() {
+    UDP packet;
+    socklen_t serverAddrSize = sizeof(serverAddr);
+    long sizeReceived;
+    sizeReceived = recvfrom(udpSock, &packet, sizeof(UDP), MSG_WAITALL,
+                            (struct sockaddr *) &serverAddr, &serverAddrSize);
+    if (sizeReceived < 0) {
+        errorMsg();
+        perror("Error receiving the UDP ALIVE packet");
+        exit(-1);
+    }
+    if (debug_mode) {
+        debugMsg();
+        printf("UDP packet type %s received correctly.\n", getTypeOfPacket(packet));
+    }
+    return packet;
+}
+
+void sendALIVELoop() {
+    if (clientData.Status != REGISTERED) {
+        errorMsg();
+        printf("Wrong client status!\n");
+        login();
+        return;
+    }
+    clientData.Status = SEND_ALIVE;
+    infoMsg("Client in status SEND_ALIVE\n");
+    if (tcpSock < 0) {
+        openTCPSocket();
+    }
+    pthread_create(&tId, NULL, (void *(*)(void *)) handleTerminalInput, NULL);
+
+    int ALIVEsLost = 0;
+    UDP ALIVEPacket = buildALIVEPacket();
+    struct timeval t;
+    fd_set read_fds;
+    FD_ZERO(&read_fds);
+    FD_SET(udpSock, &read_fds);
+    while (ALIVEsLost < S) {
+        t.tv_sec = R*V;
+        t.tv_usec = 0;
+        if (sendto(udpSock, &ALIVEPacket, sizeof(UDP), 0,
+                   (const struct sockaddr *) &serverAddr, sizeof(serverAddr)) < 0) {
+            errorMsg();
+            perror("Error sending ALIVE packet");
+            exit(-1);
+        }
+        if (debug_mode) {
+            debugMsg();
+            printf("UDP packet type %s sent correctly.\n" resetColor, getTypeOfPacket(ALIVEPacket));
+        }
+        sleep(V);
+        if (select(udpSock + 1, &read_fds, NULL, NULL, &t)) {
+            UDP packet = receiveALIVEPacket();
+            if (packet.Type != ALIVE || !correctServerData(packet) || strcmp(clientData.Id, packet.Data) != 0) {
+                errorMsg();
+                printf("Incorrect packet or mismatching data!!\n");
+                pthread_cancel(tId);
+                login();
+                return;
+            }
+            ALIVEsLost = 0;
+        } else {
+            ALIVEsLost++;
+        }
+    }
+    errorMsg();
+    printf("Connexion lost with server.\n");
+    pthread_cancel(tId);
+    login();
+}
+
+_Noreturn void handleTerminalInput() {
+    char line[MAXIMUM_LINE_LENGTH];
+    while (1) {
+        fgets(line, sizeof(line), stdin);
+        line[strlen(line) - 1] = ' ';
+        char* token = strtok(line, " ");
+        if (strcmp(token, "stat") == 0) {
+            statCommand();
+        } else if (strcmp(token, "quit") == 0) {
+            quitCommand();
+        } else if (strcmp(token, "set") == 0) {
+            setCommand(token);
+        } else if (strcmp(token, "send") == 0) {
+            sendCommand();
+        } else {
+            errorMsg();
+            printf("Invalid command entered.\n");
+            printCommands();
+        }
+    }
+
+}
+
+void statCommand() {
+    printf(yellow "----------------------------------------\n");
+    for (int i=0; i < elementsNumber; i++) {
+        if (strlen(clientData.Elements[i]->Data) == 0) {
+            printf("|\t-> %s\t\t-> (no value)\t\n", clientData.Elements[i]->Id);
+        } else {
+            printf("|\t-> %s\t\t-> %s\t\n", clientData.Elements[i]->Id, clientData.Elements[i]->Data);
+        }
+    }
+    printf("----------------------------------------");
+}
+
+void setCommand(char* token) {
+    token = strtok(NULL, " ");
+    int elementIndex;
+    if (token == NULL || strlen(token) != 7 || (elementIndex = existsElement(token)) == -1) {
+        errorMsg();
+        if (token == NULL) {
+            printf("Usage: set <element_id> <new_value>\n");
+        } else if (strlen(token) != 7) {
+            printf("<element_id> has to be 7 chars\n");
+        } else {
+            printf("Specified element Id doesn't exist\n");
+        }
+        return;
+    }
+    token = strtok(NULL, " ");
+    if (token == NULL || strlen(token) > 15) {
+        errorMsg();
+        if (token == NULL) {
+            printf("Usage: set <element_id> <new_value>\n");
+        } else {
+            printf("Element data can´t be bigger than 15 digits\n");
+        }
+        return;
+    }
+    char elementData[15];
+    strcpy(elementData, token);
+    strcpy(clientData.Elements[elementIndex]->Data, elementData);
+
+    okMsg();
+    printf("Value of element established successfully\n");
+}
+
+int existsElement(char* elemId) {
+    for (int i=0; i < elementsNumber; i++) {
+        if (strcmp(clientData.Elements[i]->Id, elemId) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void sendCommand() {
+
+}
+
+void quitCommand() {
+    kill(0, SIGINT);
+}
+
+void printCommands() {
+    printf("STAT\n");
+    printf("SET\n");
+    printf("SEND\n");
+}
+
+UDP buildALIVEPacket() {
+    UDP packet;
+    packet.Type = ALIVE;
+    strcpy(packet.Id_Tans, clientData.Id);
+    strcpy(packet.Id_Comm, serverData.Id_Comm);
+    strcpy(packet.Data, "");
+    return packet;
+}
+
+void openTCPSocket() {
+    tcpSock = socket(AF_INET, SOCK_STREAM, 0);
+    if (tcpSock < 0) {
+        errorMsg();
+        perror("Error opening the TCP socket");
+        exit(-1);
+    }
+
+    //  Set up the client address (TCP) for the TCP socket (sockaddr_in struct)
+    memset(&clientAddrTCP, 0, sizeof (struct sockaddr_in));
+    clientAddrTCP.sin_family = AF_INET;
+    clientAddrTCP.sin_port = htons(clientData.Local_TCP);
+    clientAddrTCP.sin_addr.s_addr = (INADDR_ANY);
+
+    //  Bind the socket to the address set up before
+    if (bind(tcpSock, (const struct sockaddr *) &clientAddrTCP, sizeof (struct sockaddr_in)) < 0) {
+        errorMsg();
+        perror("Error binding the TCP socket");
+        exit(-1);
+    }
+
+    if (debug_mode) {
+        debugMsg();
+        printf("TCP Socket successfully created and bound.\n");
+    }
 }
