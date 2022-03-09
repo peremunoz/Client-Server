@@ -94,16 +94,15 @@ void storeLocal(char* line);
 void storeUDP(char* line);
 void openUDPSocket();
 void login();
-void infoFormat();
 void infoMsg(char text[]);
 void receiveRegisterPacket();
 UDP buildREG_REQPacket();
-void signal_handler(int signal);
+void quit_handler(int signal);
 void processREG_ACK(UDP packetReceived);
 UDP buildREG_INFOPacket();
 void processPacketType(UDP packet);
-void processREG_NACK(UDP packet);
-void processREG_REJ(UDP packet);
+void processREG_NACK();
+void processREG_REJ();
 void processINFO_ACK(UDP packet);
 void processINFO_NACK(UDP packet);
 bool correctServerData(UDP packet);
@@ -114,7 +113,7 @@ UDP buildALIVEPacket();
 UDP receiveALIVEPacket();
 void createThreads();
 int searchElement(char* elemId);
-_Noreturn void handleTerminalInput();
+void* handleTerminalInput();
 void openTCP1Socket();
 void printCommands();
 void statCommand();
@@ -128,8 +127,14 @@ char* getNowTime();
 bool correctServerDataTCP(TCP packet);
 void receiveDATAPacket(char elementId[8]);
 bool correctElementData(TCP packet, char elementId[8]);
-void ALIVELoop();
+void* ALIVELoop();
 void handleTCPConnections();
+TCP buildSET_DATAResponse(TCP receivedPacket);
+int getElementType (char* elementId);
+TCP buildGET_DATAResponse(int elementIndex);
+TCP buildDATA_NACKPacket(TCP receivedPacket);
+TCP buildDATA_REJPacket(TCP receivedPacket);
+void relogin_handler(int signal);
 
 //  Global variables
 bool debug_mode = false;
@@ -140,10 +145,11 @@ int udpSock = -1;
 int tcpSock1 = -1;  //  TCP socket for accepting server requests
 int tcpSock2 = -1;  //  TCP socket for sending data to server
 int elementsNumber;
-struct sockaddr_in clientAddrUDP, clientAddrTCP1, clientAddrTCP2, serverAddrUDP, serverAddrTCP;
+struct sockaddr_in clientAddrUDP, clientAddrTCP, serverAddrUDP, serverAddrTCP;
 bool resetCommunication = false;
 pthread_t terminalThread = (pthread_t) NULL;
-pthread_t tcpThread = (pthread_t) NULL;
+pthread_t aliveThread = (pthread_t) NULL;
+pid_t mainProcess;
 
 //  Client data struct
 struct Client_Data {
@@ -188,21 +194,33 @@ struct TCP_PDU {
 };
 
 int main(int argc, char* argv[]) {
-    signal(SIGINT, signal_handler);
+    mainProcess = getpid();
+    signal(SIGUSR2, quit_handler);
     checkParams(argc, argv);
     readCfg();
     login();
     return 0;
 }
 
-void signal_handler(int signal) {
-    if (signal == SIGINT || signal == SIGTERM) {
-        infoMsg("CLOSING CLIENT...");
+void quit_handler(int signal) {
+    if (signal == SIGUSR2) {
+        printf("\n");
+        infoMsg("CLOSING CLIENT...\n");
+        sleep(1);
         close(udpSock);
         close(tcpSock1);
+        close(tcpSock2);
         pthread_cancel(terminalThread);
-        sleep(1);
+        pthread_cancel(aliveThread);
         exit(0);
+    }
+}
+
+void relogin_handler(int signal) {
+    if (signal == SIGUSR1) {
+        pthread_cancel(terminalThread);
+        pthread_cancel(aliveThread);
+        login();
     }
 }
 
@@ -345,6 +363,10 @@ char* trimLine(char *buffer) {
 
 //  Login the client into the server
 void login() {
+
+    //  Define the signal handler every time we enter the login() function if we have to repeat it
+    signal(SIGUSR1, relogin_handler);
+
     //  We have udpSock globally pre-initialized at -1. With this, we ensure that socket is created only one time
     if (udpSock < 0) {
         openUDPSocket();
@@ -434,10 +456,6 @@ UDP buildREG_REQPacket() {
     strcpy(packet.Id_Comm, "0000000000");
     strcpy(packet.Data, "");
     return packet;
-}
-
-void infoFormat() {
-    printf(whiteBold "[INFO]\t=> " white);
 }
 
 void infoMsg(char text[]) {
@@ -537,9 +555,9 @@ void processPacketType(UDP packet) {
     if (packetType == REG_ACK) {
         processREG_ACK(packet);
     } else if (packetType == REG_NACK) {
-        processREG_NACK(packet);
+        processREG_NACK();
     } else if (packetType == REG_REJ) {
-        processREG_REJ(packet);
+        processREG_REJ();
     } else if (packetType == INFO_ACK) {
         processINFO_ACK(packet);
     } else if (packetType == INFO_NACK) {
@@ -555,6 +573,7 @@ void processINFO_NACK(UDP packet) {
         login();
         return;
     }
+    printf("INFO_NACK!!!!!\n");
     clientData.Status = NOT_REGISTERED;
     infoMsg("Client in status NOT_REGISTERED\n");
     resetCommunication = true;
@@ -593,12 +612,12 @@ void processINFO_ACK(UDP packet) {
 }
 
 //  Process a REG_REJ-type packet
-void processREG_REJ(UDP packet) {
+void processREG_REJ() {
     login();
 }
 
 //  Process a REG_NACK-type packet
-void processREG_NACK(UDP packet) {
+void processREG_NACK() {
     clientData.Status = NOT_REGISTERED;
     infoMsg("Client in status NOT_REGISTERED\n");
     resetCommunication = true;
@@ -662,14 +681,9 @@ void processREG_ACK(UDP packet) {
             debugMsg();
             printf("UDP packet type %s received correctly.\n" resetColor, getTypeOfPacket(packet));
         }
-        if (packet.Type != INFO_ACK) {
-            login();
-        }
-
-        processINFO_ACK(packet);
+        processPacketType(packet);
         return;
     }
-
     login();
 }
 
@@ -725,6 +739,7 @@ void periodicCommunication() {
     //  Packet not received in R*T seconds or incorrect packet
     errorMsg();
     printf("First ALIVE not received or incorrect packet\n");
+    sleep(V);
     login();
 }
 
@@ -758,12 +773,12 @@ void createThreads() {
     if (tcpSock1 < 0) {
         openTCP1Socket();
     }
-    pthread_create(&terminalThread, NULL, (void *(*)(void *)) handleTerminalInput, NULL);
-    pthread_create(&tcpThread, NULL, (void *(*)(void *)) handleTCPConnections, NULL);
-    ALIVELoop();
+    pthread_create(&terminalThread, NULL, &handleTerminalInput, NULL);
+    pthread_create(&aliveThread, NULL, &ALIVELoop, NULL);
+    handleTCPConnections();
 }
 
-void ALIVELoop() {
+void* ALIVELoop() {
     int ALIVEsLost = 0;
     UDP ALIVEPacket = buildALIVEPacket();
     struct timeval t;
@@ -771,9 +786,6 @@ void ALIVELoop() {
     FD_ZERO(&read_fds);
     FD_SET(udpSock, &read_fds);
     while (ALIVEsLost < S) {
-        if (resetCommunication) {
-            return;
-        }
         sleep(V);
         t.tv_sec = R*V;
         t.tv_usec = 0;
@@ -792,9 +804,8 @@ void ALIVELoop() {
             if (packet.Type != ALIVE || !correctServerData(packet) || strcmp(clientData.Id, packet.Data) != 0) {
                 errorMsg();
                 printf("Incorrect packet or mismatching data!!\n");
-                pthread_cancel(terminalThread);
-                login();
-                return;
+                kill(mainProcess, SIGUSR1);
+                return NULL;
             }
             ALIVEsLost = 0;
         } else {
@@ -805,46 +816,158 @@ void ALIVELoop() {
     printf("Connexion lost with server.\n");
     pthread_cancel(terminalThread);
     login();
+    return NULL;
 }
 
+//  Function for handling TCP requests from server (Ran by main process)
 void handleTCPConnections() {
+    int newTCPsocket;
     while (1) {
-        socklen_t* addrLen = (socklen_t *) sizeof(serverAddrTCP);
-        if (accept(tcpSock1, (struct sockaddr *) &serverAddrTCP, addrLen) < 0) {
+        if (listen(tcpSock1, 1) < 0) {
             errorMsg();
-            perror("Error accepting TCP1 connection.");
+            perror("Error listening TCP1 connection.");
+            exit(-1);
+        }
+        socklen_t addrLen = sizeof(serverAddrTCP);
+
+        newTCPsocket = accept(tcpSock1, (struct sockaddr *) &serverAddrTCP, &addrLen);
+        if (newTCPsocket < 0) {
+            errorMsg();
+            perror("Error accepting TCP1 connection");
             exit(-1);
         }
 
         TCP packet;
-        if (recv(tcpSock1, &packet, sizeof(TCP), MSG_WAITALL) < 0) {
+        if (recv(newTCPsocket, &packet, sizeof(TCP), MSG_WAITALL) < 0) {
             errorMsg();
-            perror("Error receiving packet from TCP1.");
+            perror("Error receiving packet from TCP1");
             exit(-1);
         }
 
-        int elementIndex;
-        if (packet.Type == SET_DATA && (elementIndex = searchElement(packet.Element)) > -1 && getElementType(packet.Element) == 0) {
+        int elementIndex = searchElement(packet.Element);
+        if (!correctServerDataTCP(packet)) {
+            TCP DATA_REJPacket = buildDATA_REJPacket(packet);
+            if (send(newTCPsocket, &DATA_REJPacket, sizeof(TCP), 0) < 0) {
+                errorMsg();
+                perror("Error sending the DATA_REJ packet.");
+                exit(-1);
+            }
+            if (debug_mode) {
+                debugMsg();
+                printf("SET/GET packet received with mismatching server/client information\n");
+                debugMsg();
+                printf("DATA_REJ packet sent correctly\n");
+            }
+            pthread_cancel(terminalThread);
+            pthread_cancel(aliveThread);
+            login();
+            return;
+
+        } else if (elementIndex < 0 || (packet.Type == SET_DATA && getElementType(packet.Element) == 0)) {
+            TCP DATA_NACKPacket = buildDATA_NACKPacket(packet);
+            if (send(newTCPsocket, &DATA_NACKPacket, sizeof(TCP), 0) < 0) {
+                errorMsg();
+                perror("Error sending the DATA_NACK packet.");
+                exit(-1);
+            }
+            if (debug_mode) {
+                debugMsg();
+                printf("SET/GET packet received with wrong element information\n");
+                debugMsg();
+                printf("DATA_NACK packet sent correctly\n");
+            }
+
+        } else if (packet.Type == SET_DATA && getElementType(packet.Element) == 1) {
             strcpy(clientData.Elements[elementIndex]->Data, packet.Value);
-            TCP DATA_ACKPacket = buildDATA_ACKPacket();
-            if (send(tcpSock1, DATA_ACKPacket, sizeof(TCP), 0) < 0) {
+            if (debug_mode) {
+                debugMsg();
+                printf("Element id: %s set correctly to %s\n", clientData.Elements[elementIndex]->Id, clientData.Elements[elementIndex]->Data);
+            }
+            TCP SET_DATAResponse = buildSET_DATAResponse(packet);
+            if (send(newTCPsocket, &SET_DATAResponse, sizeof(TCP), 0) < 0) {
                 errorMsg();
                 perror("Error sending the DATA_ACK packet.");
                 exit(-1);
             }
+            if (debug_mode) {
+                debugMsg();
+                printf("SET packet received with correct information\n");
+                debugMsg();
+                printf("DATA_ACK packet sent correctly\n");
+            }
         } else if (packet.Type == GET_DATA) {
-
+            TCP GET_DATAResponse = buildGET_DATAResponse(elementIndex);
+            if (send(newTCPsocket, &GET_DATAResponse, sizeof(TCP), 0) < 0) {
+                errorMsg();
+                perror("Error sending the GET_DATA packet.");
+                exit(-1);
+            }
+            if (debug_mode) {
+                debugMsg();
+                printf("GET packet received with correct information\n");
+                debugMsg();
+                printf("DATA_ACK packet sent correctly\n");
+            }
         }
     }
 }
 
-//  Returns 0 if output type or 1 if input type
-int getElementType (char* elementId) {
-    int elementIndex = searchElement(elementId);
-
+TCP buildDATA_REJPacket(TCP receivedPacket) {
+    TCP packet;
+    packet.Type = DATA_REJ;
+    strcpy(packet.Id_Trans, clientData.Id);
+    strcpy(packet.Id_Comm, serverData.Id_Comm);
+    strcpy(packet.Element, receivedPacket.Element);
+    strcpy(packet.Value, receivedPacket.Value);
+    strcpy(packet.Info, "Mismatching server/client information");
+    return packet;
 }
 
-_Noreturn void handleTerminalInput() {
+TCP buildDATA_NACKPacket(TCP receivedPacket) {
+    TCP packet;
+    packet.Type = DATA_NACK;
+    strcpy(packet.Id_Comm, serverData.Id_Comm);
+    strcpy(packet.Id_Trans, clientData.Id);
+    strcpy(packet.Element, receivedPacket.Element);
+    strcpy(packet.Value, receivedPacket.Value);
+    strcpy(packet.Info, "Error in element information.");
+    return packet;
+}
+
+TCP buildGET_DATAResponse(int elementIndex) {
+    TCP packet;
+    packet.Type = DATA_ACK;
+    strcpy(packet.Id_Trans, clientData.Id);
+    strcpy(packet.Id_Comm, serverData.Id_Comm);
+    strcpy(packet.Element, clientData.Elements[elementIndex]->Id);
+    strcpy(packet.Value, clientData.Elements[elementIndex]->Data);
+    char* time = getNowTime();
+    strcpy(packet.Info, time);
+    return packet;
+}
+
+TCP buildSET_DATAResponse(TCP receivedPacket) {
+    TCP packet;
+    packet.Type = DATA_ACK;
+    strcpy(packet.Id_Comm, serverData.Id_Comm);
+    strcpy(packet.Id_Trans, clientData.Id);
+    strcpy(packet.Element, receivedPacket.Element);
+    strcpy(packet.Value, receivedPacket.Value);
+    char* time = getNowTime();
+    strcpy(packet.Info, time);
+    return packet;
+}
+
+//  Returns 0 if output type or 1 if input type
+int getElementType (char* elementId) {
+    if (strcmp(&elementId[strlen(elementId) - 1], "O") == 0) {
+        return 0;
+    } else {
+        return 1;
+    }
+}
+
+void* handleTerminalInput() {
     char line[MAXIMUM_LINE_LENGTH];
     while (1) {
         fgets(line, sizeof(line), stdin);
@@ -973,7 +1096,7 @@ void sendCommand(char* token) {
         return;
     }
 
-    infoMsg("DATA response not received, resending SEND_DATA packet to server.\n");
+    infoMsg("DATA response not received, resending SEND_DATA packet to server...\n");
     close(tcpSock2);
 }
 
@@ -988,9 +1111,9 @@ void receiveDATAPacket(char elementId[8]) {
     close(tcpSock2);
 
     if (packet.Type == DATA_REJ || !correctServerDataTCP(packet) || strcmp(packet.Info, clientData.Id) != 0) {
-        pthread_cancel(terminalThread);
-        resetCommunication = true;
-        login();
+        errorMsg();
+        printf("Incorrect DATA packet received. Re-login to server...\n");
+        kill(mainProcess, SIGUSR1);
         return;
     }
 
@@ -1022,12 +1145,7 @@ TCP buildSEND_DATAPacket(char elementId[8]) {
     strcpy(packet.Id_Trans, clientData.Id);
     strcpy(packet.Id_Comm, serverData.Id_Comm);
     strcpy(packet.Element, elementId);
-    char* elementValue;
-    elementValue = getElementValue(elementId);
-    if (elementValue == NULL) {
-
-    }
-    strcpy(elementValue, getElementValue(elementId));
+    strcpy(packet.Value, getElementValue(elementId));
     char* time = getNowTime();
     strcpy(packet.Info, time);
     return packet;
@@ -1074,7 +1192,7 @@ void setupServAddrTCP() {
 }
 
 void quitCommand() {
-    kill(0, SIGINT);
+    kill(mainProcess, SIGUSR2);
 }
 
 void printCommands() {
@@ -1102,13 +1220,13 @@ void openTCP1Socket() {
     }
 
     //  Set up the client address (TCP) for the TCP1 socket (sockaddr_in struct)
-    memset(&clientAddrTCP1, 0, sizeof (struct sockaddr_in));
-    clientAddrTCP1.sin_family = AF_INET;
-    clientAddrTCP1.sin_port = htons(clientData.Local_TCP);
-    clientAddrTCP1.sin_addr.s_addr = (INADDR_ANY);
+    memset(&clientAddrTCP, 0, sizeof (struct sockaddr_in));
+    clientAddrTCP.sin_family = AF_INET;
+    clientAddrTCP.sin_port = htons(clientData.Local_TCP);
+    clientAddrTCP.sin_addr.s_addr = (INADDR_ANY);
 
     //  Bind the socket to the address set up before
-    if (bind(tcpSock1, (const struct sockaddr *) &clientAddrTCP1, sizeof (struct sockaddr_in)) < 0) {
+    if (bind(tcpSock1, (const struct sockaddr *) &clientAddrTCP, sizeof (struct sockaddr_in)) < 0) {
         errorMsg();
         perror("Error binding the TCP1 socket");
         exit(-1);
