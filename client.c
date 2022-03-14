@@ -75,7 +75,8 @@ TCP buildDATA_NACKPacket(TCP receivedPacket);
 TCP buildDATA_REJPacket(TCP receivedPacket);
 //      Auxiliary functions
 void checkParams(int argc, char* argv[]);
-char* getTypeOfPacket(UDP packet);
+char* getTypeOfPacketUDP(UDP packet);
+char* getTypeOfPacketTCP(TCP packet);
 int searchElement(char* elemId);
 char* getElementValue(char* elementId);
 char* getNowTime();
@@ -83,6 +84,7 @@ int getElementType(char* elementId);
 //      Formatting functions
 void debugMsg();
 void infoMsg(char text[]);
+void infoFormat();
 void errorMsg();
 void okMsg();
 
@@ -399,7 +401,7 @@ void login() {
             }
             if (debug_mode) {
                 debugMsg();
-                printf("REG_REQ packet N. %i sent. t = %i\n", packetsPerSignup, acc + T);
+                printf("%s packet N. %i sent. t = %i\n", getTypeOfPacketUDP(registerPacket) ,packetsPerSignup, acc + T);
             }
 
             //  If we continued the same register process after receiving a packet, we have to re-update
@@ -431,7 +433,7 @@ void receiveRegisterPacket() {
     }
     if (debug_mode) {
         debugMsg();
-        printf("UDP packet type %s received correctly.\n" resetColor, getTypeOfPacket(packet));
+        printf("UDP packet type %s received correctly.\n" resetColor, getTypeOfPacketUDP(packet));
     }
     processPacketType(packet);
 }
@@ -505,10 +507,9 @@ void processREG_ACK(UDP packet) {
             perror("Error receiving the UDP INFO_ACK packet");
             exit(-1);
         }
-    }
         if (debug_mode) {
             debugMsg();
-            printf("UDP packet type %s received correctly.\n" resetColor, getTypeOfPacket(packet));
+            printf("UDP packet type %s received correctly.\n" resetColor, getTypeOfPacketUDP(packet));
         }
         processPacketType(packet);
         return;
@@ -589,7 +590,7 @@ void periodicCommunication() {
     }
     if (debug_mode) {
         debugMsg();
-        printf("UDP packet type %s sent correctly.\n" resetColor, getTypeOfPacket(ALIVEPacket));
+        printf("UDP packet type %s sent correctly.\n" resetColor, getTypeOfPacketUDP(ALIVEPacket));
     }
     struct timeval t;
     t.tv_sec = R*V;
@@ -650,7 +651,7 @@ void* ALIVELoop() {
         }
         if (debug_mode) {
             debugMsg();
-            printf("UDP packet type %s sent correctly.\n" resetColor, getTypeOfPacket(ALIVEPacket));
+            printf("UDP packet type %s sent correctly.\n" resetColor, getTypeOfPacketUDP(ALIVEPacket));
         }
         if (select(udpSock + 1, &read_fds, NULL, NULL, &t)) {
             UDP packet = receiveALIVEPacket();
@@ -789,7 +790,7 @@ void sendCommand(char* token) {
 
     if (debug_mode) {
         debugMsg();
-        printf("SEND_DATA packet sent correctly\n");
+        printf("%s packet sent correctly\n", getTypeOfPacketTCP(SEND_DATAPacket));
     }
 
     fd_set read_fds;
@@ -891,7 +892,7 @@ void handleTCPConnections() {
             }
             if (debug_mode) {
                 debugMsg();
-                printf("SET/GET packet received with mismatching server/client information\n");
+                printf("%s packet received with mismatching server/client information\n", getTypeOfPacketTCP(packet));
                 debugMsg();
                 printf("DATA_REJ packet sent correctly\n");
             }
@@ -909,7 +910,7 @@ void handleTCPConnections() {
             }
             if (debug_mode) {
                 debugMsg();
-                printf("SET/GET packet received with wrong element information\n");
+                printf("%s packet received with wrong element information\n", getTypeOfPacketTCP(DATA_NACKPacket));
                 debugMsg();
                 printf("DATA_NACK packet sent correctly\n");
             }
@@ -928,9 +929,9 @@ void handleTCPConnections() {
             }
             if (debug_mode) {
                 debugMsg();
-                printf("SET packet received with correct information\n");
+                printf("%s packet received with correct information\n", getTypeOfPacketTCP(packet));
                 debugMsg();
-                printf("DATA_ACK packet sent correctly\n");
+                printf("%s packet sent correctly\n", getTypeOfPacketTCP(SET_DATAResponse));
             }
         } else if (packet.Type == GET_DATA) {
             TCP GET_DATAResponse = buildGET_DATAResponse(elementIndex);
@@ -941,9 +942,9 @@ void handleTCPConnections() {
             }
             if (debug_mode) {
                 debugMsg();
-                printf("GET packet received with correct information\n");
+                printf("%s packet received with correct information\n", getTypeOfPacketTCP(packet));
                 debugMsg();
-                printf("DATA_ACK packet sent correctly\n");
+                printf("%s packet sent correctly\n", getTypeOfPacketTCP(GET_DATAResponse));
             }
         }
     }
@@ -962,14 +963,15 @@ void receiveDATAPacket(char elementId[8]) {
 
     if (packet.Type == DATA_REJ || !correctServerDataTCP(packet) || strcmp(packet.Info, clientData.Id) != 0) {
         errorMsg();
-        printf("Incorrect DATA packet received. Re-login to server...\n");
+        printf("Incorrect %s packet received. Re-login to server...\n", getTypeOfPacketTCP(packet));
         kill(mainProcess, SIGUSR1);
         return;
     }
 
     if (packet.Type == DATA_NACK || !correctElementData(packet, elementId)) {
         if (packet.Type == DATA_NACK) {
-            infoMsg("DATA_NACK packet received, resending SEND_DATA packet to server.\n");
+            infoFormat();
+            printf("%s packet received, resending SEND_DATA packet to server.\n" resetColor, getTypeOfPacketTCP(packet));
         } else {
             infoMsg("Mismatching element information, resending SEND_DATA packet to server.\n");
         }
@@ -978,7 +980,7 @@ void receiveDATAPacket(char elementId[8]) {
     //  If DATA_ACK is the packet received with correct element data
 
     okMsg();
-    printf("Element value successfully stored in server.\n");
+    printf("Element value successfully stored in server.\n" resetColor);
 }
 
 //  Checks if the server information stored and the received in the packet matches
@@ -1058,7 +1060,7 @@ UDP receiveALIVEPacket() {
     }
     if (debug_mode) {
         debugMsg();
-        printf("UDP packet type %s received correctly.\n", getTypeOfPacket(packet));
+        printf("UDP packet type %s received correctly.\n", getTypeOfPacketUDP(packet));
     }
     return packet;
 }
@@ -1150,7 +1152,7 @@ void checkParams(int argc, char* argv[]) {
 }
 
 //  Returns the string-format packet type
-char* getTypeOfPacket(UDP packet) {
+char* getTypeOfPacketUDP(UDP packet) {
     char* charPointer;
     if (packet.Type == REG_ACK) {
         return charPointer="REG_ACK";
@@ -1166,6 +1168,28 @@ char* getTypeOfPacket(UDP packet) {
         return charPointer="ALIVE";
     } else if (packet.Type == ALIVE_REJ) {
         return charPointer="ALIVE_REJ";
+    } else if (packet.Type == REG_INFO) {
+        return (charPointer="REG_INFO");
+    } else if (packet.Type == INFO_REJ) {
+        return (charPointer = "INFO_REJ");
+    }
+    return NULL;
+}
+
+char* getTypeOfPacketTCP(TCP packet) {
+    char* charPointer;
+    if (packet.Type == SEND_DATA) {
+        return (charPointer="SEND_DATA");
+    } else if (packet.Type == DATA_ACK) {
+    return (charPointer="DATA_ACK");
+    } else if (packet.Type == DATA_NACK) {
+    return (charPointer="DATA_NACK");
+    } else if (packet.Type == DATA_REJ) {
+    return (charPointer="DATA_REJ");
+    } else if (packet.Type == SET_DATA) {
+    return (charPointer="SET_DATA");
+    } else if (packet.Type == GET_DATA) {
+    return (charPointer="GET_DATA");
     }
     return NULL;
 }
@@ -1232,6 +1256,10 @@ void debugMsg() {
 
 void infoMsg(char text[]) {
     printf(whiteBold "[INFO]\t=>\t" white "%s" resetColor, text);
+}
+
+void infoFormat() {
+    printf(whiteBold "[INFO]\t=>\t" white);
 }
 
 void errorMsg() {
