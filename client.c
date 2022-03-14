@@ -498,15 +498,14 @@ void processREG_ACK(UDP packet) {
     if (select(udpSock + 1, &read_fds, NULL, NULL, &t)) {
         long sizeReceived = 0;
         socklen_t serverAddrSize = sizeof(serverAddrUDP);
-        while (sizeReceived != sizeof(UDP)) {
-            sizeReceived += recvfrom(udpSock, &packet, sizeof(UDP), 0,
-                                     (struct sockaddr *) &serverAddrUDP, &serverAddrSize);
-            if (sizeReceived < 0) {
-                errorMsg();
-                perror("Error receiving the UDP INFO_ACK packet");
-                exit(-1);
-            }
+        sizeReceived = recvfrom(udpSock, &packet, sizeof(UDP), MSG_WAITALL,
+                                (struct sockaddr *) &serverAddrUDP, &serverAddrSize);
+        if (sizeReceived < 0) {
+            errorMsg();
+            perror("Error receiving the UDP INFO_ACK packet");
+            exit(-1);
         }
+    }
         if (debug_mode) {
             debugMsg();
             printf("UDP packet type %s received correctly.\n" resetColor, getTypeOfPacket(packet));
@@ -953,7 +952,7 @@ void handleTCPConnections() {
 //  Receives a DATA_XXX-type packet, and it processes depending on its type
 void receiveDATAPacket(char elementId[8]) {
     TCP packet;
-    if (recv(tcpSock2, &packet, sizeof(TCP), 0) < 0) {
+    if (recv(tcpSock2, &packet, sizeof(TCP), MSG_WAITALL) < 0) {
         errorMsg();
         perror("Error receiving the DATA Packet");
         exit(-1);
