@@ -1,6 +1,9 @@
+import struct
 import sys
 from dataclasses import dataclass
 import servermodule
+import threading
+import socket
 
 
 class Colors:
@@ -28,6 +31,14 @@ class Client:
     Status: str = servermodule.DISCONNECTED
     Id_Comm: int = 0
     IP_Address: str = 0
+
+
+@dataclass
+class UDP_PDU:
+    Type: str
+    Id_Trans: str
+    Id_Comm: str
+    Data: str
 
 
 serverCfg = ServerCfg
@@ -106,7 +117,55 @@ def readAuthFile():
         clients.append(client)
 
 
+def startServer():
+    mainUDPSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    mainUDPSocket.bind(('', int(serverCfg.UDP)))
+
+    mainTCPSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    mainTCPSocket.bind(('', int(serverCfg.TCP)))
+
+    mainUDPThread = threading.Thread(target=handleUDPConnections, args=(mainUDPSocket,))
+    mainTCPThread = threading.Thread(target=handleTCPConnections, args=(mainTCPSocket,))
+
+    mainUDPThread.start()
+    mainTCPThread.start()
+    handleTerminalInput()
+
+
+def handleUDPConnections(mainUDPSocket: socket.socket):  # HANDLING UDP CONNECTIONS AND THREAD EVERY NEW CONNECTION.
+    while 1:
+        (bytesReceived, (ip, port)) = mainUDPSocket.recvfrom(sys.getsizeof(UDP_PDU), socket.MSG_WAITALL)
+        clientUDPThread = threading.Thread(target=handleUDPConnection, args=(bytesReceived, ip, port,))
+        clientUDPThread.start()
+
+
+def handleUDPConnection(bytesReceived, ip, port):
+    packet = unpackUDP(bytesReceived)
+
+
+def unpackUDP(bytesReceived: bytes):
+    unpackedPacket = struct.unpack('B 11s 11s 61s', bytesReceived)
+    packetType = unpackedPacket[0]
+    packetId_Trans = unpackedPacket[1].decode().split("\x00")[0]
+    packetId_Comm = unpackedPacket[2].decode().split("\x00")[0]
+    try:
+        packetData = unpackedPacket[3].decode().split("\x00")[0]
+    except UnicodeDecodeError:
+        packetData = ""
+    return UDP_PDU(packetType, packetId_Trans, packetId_Comm, packetData)
+
+
+def handleTCPConnections(
+        mainTCPSocket):  # HANDLING TCP CONNECTIONS AND THREADING EVERY NEW CONNECTIONS AND SAVING IT TO CLIENT CLASS
+    pass
+
+
+def handleTerminalInput():  # USER TERMINAL INPUT
+    pass
+
+
 if __name__ == "__main__":
     checkParams()
     readCfgFile()
     readAuthFile()
+    startServer()
