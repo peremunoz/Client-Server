@@ -410,6 +410,7 @@ void login() {
                 clientData.Status = WAIT_ACK_REG;
                 infoMsg("Client in status WAIT_ACK_REG\n");
                 resetCommunication = false;
+                setupServAddrUDP();
             }
         }
         sleep(U);   // Wait U seconds before starting another register process
