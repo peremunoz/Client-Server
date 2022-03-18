@@ -10,3 +10,4 @@ cmake-build-debug/pra1xarxes
 *.log
 cmake-build-debug/CMakeFiles/clion-log.txt
 *.xml
+client

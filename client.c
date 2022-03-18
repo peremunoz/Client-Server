@@ -1,14 +1,15 @@
 #include "client.h"
 
 //  Constants
+#define TIME_TO_WAIT 3
 #define MAXIMUM_LINE_LENGTH 255
 #define P 2
 #define Q 4
-#define N 6
-#define U 3
-#define O 4
-#define T 2
-#define V 3
+#define N 8
+#define U 2
+#define O 3
+#define T 1
+#define V 2
 #define R 2
 #define S 3
 #define M 3
@@ -48,7 +49,8 @@ void setupServAddrUDP();
 //      Periodic communication functions
 void periodicCommunication();
 void createThreads();
-void* ALIVELoop();
+void* sendALIVEs();
+void* receiveALIVE();
 //      Terminal handling functions
 void* handleTerminalInput();
 void statCommand();
@@ -100,8 +102,10 @@ int elementsNumber; //  Client's element number
 struct sockaddr_in clientAddrUDP, clientAddrTCP, serverAddrUDP, serverAddrTCP;
 bool resetCommunication = false;
 pthread_t terminalThread = (pthread_t) NULL;
-pthread_t aliveThread = (pthread_t) NULL;
+pthread_t receiveAliveThread = (pthread_t) NULL;
+pthread_t sendAliveThread = (pthread_t) NULL;
 pid_t mainProcess;
+int ALIVEsLost = 0;
 
 //  Client data struct
 struct Client_Data {
@@ -167,7 +171,7 @@ void quit_handler(int signal) {
         close(tcpSock1);
         close(tcpSock2);
         pthread_cancel(terminalThread);
-        pthread_cancel(aliveThread);
+        pthread_cancel(sendAliveThread);
         if (debug_mode) {
             debugMsg();
             printf("UDP, TCP1 and TCP2 sockets closed successfully\n");
@@ -181,7 +185,8 @@ void quit_handler(int signal) {
 void relogin_handler(int signal) {
     if (signal == SIGUSR1) {
         pthread_cancel(terminalThread);
-        pthread_cancel(aliveThread);
+        pthread_cancel(sendAliveThread);
+        sleep(TIME_TO_WAIT);        //  Added some pause time between signups to server for avoiding flooding requests
         login();
     }
 }
@@ -462,6 +467,7 @@ void processREG_ACK(UDP packet) {
         errorMsg();
         printf("Wrong client status or wrong packet!!\n");
         login();
+        sleep(TIME_TO_WAIT);
         return;
     }
     //  Copy the communication ID, the server ID and the server IP for securing network purposes
@@ -515,6 +521,7 @@ void processREG_ACK(UDP packet) {
         processPacketType(packet);
         return;
     }
+    sleep(TIME_TO_WAIT);
     login();
 }
 
@@ -628,22 +635,16 @@ void createThreads() {
         openTCP1Socket();
     }
     pthread_create(&terminalThread, NULL, &handleTerminalInput, NULL);
-    pthread_create(&aliveThread, NULL, &ALIVELoop, NULL);
+    pthread_create(&sendAliveThread, NULL, &sendALIVEs, NULL);
     handleTCPConnections();
 }
 
-//  Does the periodic sending of ALIVE packets, and it checks those responses
-void* ALIVELoop() {
-    int ALIVEsLost = 0;
+//  Does the periodic sending of ALIVE packets
+void* sendALIVEs() {
+    ALIVEsLost = 0;
     UDP ALIVEPacket = buildALIVEPacket();
-    struct timeval t;
-    fd_set read_fds;
-    FD_ZERO(&read_fds);
-    FD_SET(udpSock, &read_fds);
-    while (ALIVEsLost < S) {
+    while(ALIVEsLost < S) {
         sleep(V);
-        t.tv_sec = R*V;
-        t.tv_usec = 0;
         if (sendto(udpSock, &ALIVEPacket, sizeof(UDP), 0,
                    (const struct sockaddr *) &serverAddrUDP, sizeof(serverAddrUDP)) < 0) {
             errorMsg();
@@ -652,25 +653,35 @@ void* ALIVELoop() {
         }
         if (debug_mode) {
             debugMsg();
-            printf("UDP packet type %s sent correctly.\n" resetColor, getTypeOfPacketUDP(ALIVEPacket));
+            printf("UDP packet type %s sent correctly. ALIVE pending responses: %i\n" resetColor, getTypeOfPacketUDP(ALIVEPacket), ALIVEsLost);
         }
-        if (select(udpSock + 1, &read_fds, NULL, NULL, &t)) {
-            UDP packet = receiveALIVEPacket();
-            if (packet.Type != ALIVE || !correctServerData(packet) || strcmp(clientData.Id, packet.Data) != 0) {
-                errorMsg();
-                printf("Incorrect packet or mismatching data!!\n");
-                kill(mainProcess, SIGUSR1);
-                return NULL;
-            }
-            ALIVEsLost = 0;
-        } else {
-            ALIVEsLost++;
-        }
+        pthread_create(&receiveAliveThread, NULL, &receiveALIVE, NULL);
     }
     errorMsg();
     printf("Connexion lost with server.\n");
-    pthread_cancel(terminalThread);
-    login();
+    kill(mainProcess, SIGUSR1);
+    return NULL;
+}
+
+//  It checks the ALIVE response
+void* receiveALIVE() {
+    ALIVEsLost++;
+    struct timeval t;
+    fd_set read_fds;
+    FD_ZERO(&read_fds);
+    FD_SET(udpSock, &read_fds);
+    t.tv_sec = R*V;
+    t.tv_usec = 0;
+    if (select(udpSock + 1, &read_fds, NULL, NULL, &t)) {
+        UDP packet = receiveALIVEPacket();
+        if (packet.Type != ALIVE || !correctServerData(packet) || strcmp(clientData.Id, packet.Data) != 0) {
+            errorMsg();
+            printf("Incorrect packet or mismatching data!!\n");
+            kill(mainProcess, SIGUSR1);
+            return NULL;
+        }
+        ALIVEsLost = 0;
+    }
     return NULL;
 }
 
@@ -898,7 +909,7 @@ void handleTCPConnections() {
                 printf("DATA_REJ packet sent correctly\n");
             }
             pthread_cancel(terminalThread);
-            pthread_cancel(aliveThread);
+            pthread_cancel(sendAliveThread);
             login();
             return;
 
