@@ -63,6 +63,13 @@ class UDP_PDU:
     Id_Comm: str
     Data: str
 
+    def send(self, socketToSend, client, port):
+        packetPacked = packUDP(self)
+        bytesSent = socketToSend.sendto(packetPacked, (client.IP_Address, port))
+        while bytesSent != UDPPacketSize:  # 84 = size of UDP_PDU
+            bytesSent += socketToSend.sendto(packetPacked[bytesSent:], (client.IP_Address, port))
+        debugMsg("Packet " + typeToString(self.Type) + " sent correctly to " + client.Id)
+
 
 #   CONSTANTS
 UDPPacketSize = 84
@@ -229,6 +236,7 @@ def switcher(bytesPacket, ip, port, mainUDPSocket):
     packet = unpackUDP(bytesPacket)
 
     if not packetFromAuthedUser(packet):
+        debugMsg("Received a packet from unknown user")
         sendREG_REJ(mainUDPSocket, ip, port, "Client with id: " + packet.Id_Trans + " not authed in server")
         exit(0)
 
@@ -250,7 +258,6 @@ def switcher(bytesPacket, ip, port, mainUDPSocket):
 
 def handlePeriodicCommunication(ALIVE: UDP_PDU, mainUDPSocket: socket.socket, client: Client):
     if incorrectALIVE(ALIVE, client):
-        print(ALIVE)
         debugMsg("Incorrect ALIVE packet received from " + client.Id)
         sendALIVE_REJ(mainUDPSocket, client)
         client.setStatus(servermodule.DISCONNECTED)
@@ -270,49 +277,45 @@ def handlePeriodicCommunication(ALIVE: UDP_PDU, mainUDPSocket: socket.socket, cl
 
     client.ALIVEReceived = True
     sendALIVE(mainUDPSocket, client)
-    debugMsg("ALIVE response sent to client " + client.Id)
 
 
 def startALIVETimer(client: Client):
-    while client.ALIVEsLost < 4:
+    while client.ALIVEsLost < 3:
         time.sleep(W)
         if client.ALIVEReceived:
             client.ALIVEReceived = False
             client.ALIVEsLost = 0
         elif not client.ALIVEReceived:
             client.ALIVEsLost += 1
+            debugMsg("Total lost ALIVEs: " + str(client.ALIVEsLost))
 
     client.setStatus(servermodule.DISCONNECTED)
 
 
 def handleRegisterRequest(REG_REQPacket, mainUDPSocket, client: Client):
-    if REG_REQPacket.Type != servermodule.REG_REQ:
-        debugMsg("Error packet type received: " + typeToString(
-            REG_REQPacket.Type) + " with client in status " + statusToString(client.Status))
-        client.setStatus(servermodule.DISCONNECTED)
-        exit(0)
-
     if REG_REQPacket.Id_Comm != "0000000000" or REG_REQPacket.Data != "":
         debugMsg("Received a REG_REQ packet with wrong information")
-        sendREG_REJ(mainUDPSocket, client, "Wrong information in packet REG_REQ")
+        sendREG_REJ(mainUDPSocket, client.IP_Address, client.defaultUDPort, "Wrong information in packet REG_REQ")
         client.setStatus(servermodule.DISCONNECTED)
         exit(0)
 
     debugMsg("Correct REG_REQ packet received from client " + client.Id)
 
     if client.Status != servermodule.DISCONNECTED:
-        sendREG_REJ(mainUDPSocket, client,
+        sendREG_REJ(mainUDPSocket, client.IP_Address, client.defaultUDPort,
                     "Client with id: " + client.Id + " it's not in status DISCONNECTED")
         client.setStatus(servermodule.DISCONNECTED)
         exit(0)
 
     Id_Comm = random.randint(1000000000, 9999999999)
     client.Id_Comm = Id_Comm
+
     clientUDPSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     clientUDPSocket.bind(("", 0))
     newUDPPort = clientUDPSocket.getsockname()[1]
     client.newUDPort = newUDPPort
-    sendREG_ACK(mainUDPSocket, client, newUDPPort)
+
+    sendREG_ACK(mainUDPSocket, client)
     debugMsg("Opened new UDP-Port (" + str(newUDPPort) + ") for client " + client.Id)
 
     client.setStatus(servermodule.WAIT_INFO)
@@ -322,8 +325,8 @@ def handleRegisterRequest(REG_REQPacket, mainUDPSocket, client: Client):
         client.setStatus(servermodule.DISCONNECTED)
         exit(0)
 
-    (REG_INFObytes, (ip, port)) = clientUDPSocket.recvfrom(UDPPacketSize, socket.MSG_WAITALL)
-    REG_INFOPacket = unpackUDP(REG_INFObytes)
+    (REG_INFOBytes, (ip, port)) = clientUDPSocket.recvfrom(UDPPacketSize, socket.MSG_WAITALL)
+    REG_INFOPacket = unpackUDP(REG_INFOBytes)
 
     if REG_INFOPacket.Type != servermodule.REG_INFO:
         debugMsg("Error packet type received: " + typeToString(
@@ -334,15 +337,14 @@ def handleRegisterRequest(REG_REQPacket, mainUDPSocket, client: Client):
 
     if REG_INFOPacket.Id_Trans != str(client.Id) or REG_INFOPacket.Id_Comm != str(Id_Comm):
         debugMsg("Wrong information in packet REG_INFO from client " + client.Id)
-        sendINFO_NACK(clientUDPSocket, ip, port, client, "Wrong information in packet REG_INFO")
+        sendINFO_NACK(clientUDPSocket, client, "Wrong information in packet REG_INFO")
         client.setStatus(servermodule.DISCONNECTED)
         exit(0)
 
-    debugMsg("REG_INFO packet received correctly from " + client.Id)
+    debugMsg("Correct REG_INFO packet received from " + client.Id)
     storeREG_INFOData(REG_INFOPacket.Data, client)
 
-    sendINFO_ACK(clientUDPSocket, ip, port, client)
-    debugMsg("INFO_ACK packet sent to " + client.Id)
+    sendINFO_ACK(clientUDPSocket, client)
     client.setStatus(servermodule.REGISTERED)
     ALIVEThread = threading.Thread(target=startALIVETimer, args=(client,))
     ALIVEThread.start()
@@ -353,10 +355,7 @@ def handleRegisterRequest(REG_REQPacket, mainUDPSocket, client: Client):
 
 def sendALIVE(socketToSend, client: Client):
     ALIVEPacket = UDP_PDU(servermodule.ALIVE, serverCfg.Id, client.Id_Comm, client.Id)
-    ALIVEPacked = packUDP(ALIVEPacket)
-    bytesSent = socketToSend.sendto(ALIVEPacked, (client.IP_Address, client.defaultUDPort))
-    while bytesSent != UDPPacketSize:  # 84 = size of UDP_PDU
-        bytesSent += socketToSend.sendto(ALIVEPacked[bytesSent:], (client.IP_Address, client.defaultUDPort))
+    ALIVEPacket.send(socketToSend, client, client.defaultUDPort)
 
 
 def incorrectALIVE(ALIVEPacket, client):
@@ -367,10 +366,7 @@ def incorrectALIVE(ALIVEPacket, client):
 
 def sendALIVE_REJ(socketToSend, client: Client):
     ALIVE_REJPacket = UDP_PDU(servermodule.ALIVE_REJ, serverCfg.Id, client.Id_Comm, "Incorrect ALIVE received")
-    ALIVE_REJPacked = packUDP(ALIVE_REJPacket)
-    bytesSent = socketToSend.sendto(ALIVE_REJPacked, (str(client.IP_Address), client.defaultUDPort))
-    while bytesSent != UDPPacketSize:  # 84 = size of UDP_PDU
-        bytesSent += socketToSend.sendto(ALIVE_REJPacked[bytesSent:], (str(client.IP_Address), client.defaultUDPort))
+    ALIVE_REJPacket.send(socketToSend, client, client.defaultUDPort)
 
 
 def storeREG_INFOData(data, client: Client):
@@ -382,26 +378,17 @@ def storeREG_INFOData(data, client: Client):
 
 def sendINFO_ACK(socketToSend, client):
     INFO_ACKPacket = UDP_PDU(servermodule.INFO_ACK, serverCfg.Id, client.Id_Comm, str(serverCfg.TCP))
-    INFO_ACKPacked = packUDP(INFO_ACKPacket)
-    bytesSent = socketToSend.sendto(INFO_ACKPacked, (client.IP_Address, client.defaultUDPort))
-    while bytesSent != UDPPacketSize:  # 84 = size of UDP_PDU
-        bytesSent += socketToSend.sendto(INFO_ACKPacked[bytesSent:], (ip, port))
+    INFO_ACKPacket.send(socketToSend, client, client.defaultUDPort)
 
 
-def sendINFO_NACK(socketToSend, ip, port, client, reason):
+def sendINFO_NACK(socketToSend, client, reason):
     INFO_NACKPacket = UDP_PDU(servermodule.INFO_NACK, serverCfg.Id, client.Id_Comm, reason)
-    INFO_NACKPacked = packUDP(INFO_NACKPacket)
-    bytesSent = socketToSend.sendto(INFO_NACKPacked, (ip, port))
-    while bytesSent != UDPPacketSize:  # 84 = size of UDP_PDU
-        bytesSent += socketToSend.sendto(INFO_NACKPacked[bytesSent:], (ip, port))
+    INFO_NACKPacket.send(socketToSend, client, client.defaultUDPort)
 
 
-def sendREG_ACK(socketToSend, ip, port, client, UDPPort):
-    REG_ACKPacket = UDP_PDU(servermodule.REG_ACK, serverCfg.Id, client.Id_Comm, UDPPort)
-    REG_ACKPacked = packUDP(REG_ACKPacket)
-    bytesSent = socketToSend.sendto(REG_ACKPacked, (ip, port))
-    while bytesSent != UDPPacketSize:  # 84 = size of UDP_PDU
-        bytesSent += socketToSend.sendto(REG_ACKPacked[bytesSent:], (ip, port))
+def sendREG_ACK(socketToSend, client: Client):
+    REG_ACKPacket = UDP_PDU(servermodule.REG_ACK, serverCfg.Id, client.Id_Comm, str(client.newUDPort))
+    REG_ACKPacket.send(socketToSend, client, client.defaultUDPort)
 
 
 def searchClient(clientId):
@@ -412,7 +399,7 @@ def searchClient(clientId):
 
 def packetFromAuthedUser(packet: UDP_PDU):
     userToSearch = packet.Id_Trans
-    for i in range(sys.getsizeof(clients)):
+    for i in range(len(clients)):
         if clients[i].Id == userToSearch:
             return True
     return False
@@ -424,6 +411,7 @@ def sendREG_REJ(socketToSend, ip, port, reason):
     bytesSent = socketToSend.sendto(REG_REJPacked, (ip, port))
     while bytesSent != UDPPacketSize:
         bytesSent += socketToSend.sendto(REG_REJPacked[bytesSent:], (ip, port))
+    debugMsg("Packet REG_REJ sent correctly to " + str(ip))
 
 
 def packUDP(packet: UDP_PDU):
