@@ -47,6 +47,7 @@ class Client:
     firstALIVE: bool = True
     ALIVEReceived: bool = False
     ALIVEsLost: int = 0
+    ALIVETimer: threading.Thread = None
     newUDPort: int = 0
     TCP: int = 0
     Elements: list[Element] = field(default_factory=list)
@@ -54,6 +55,11 @@ class Client:
     def setStatus(self, status):
         self.Status = status
         infoMsg("Client with id " + str(self.Id) + " in status " + statusToString(self.Status))
+
+    def resetALIVE(self):
+        self.firstALIVE = True
+        self.ALIVEReceived = False
+        self.ALIVEsLost = 0
 
 
 @dataclass
@@ -245,6 +251,7 @@ def switcher(bytesPacket, ip, port, mainUDPSocket):
     client.defaultUDPort = port
 
     if packet.Type == servermodule.REG_REQ:
+        client.resetALIVE()
         handleRegisterRequest(packet, mainUDPSocket, client)
     elif packet.Type == servermodule.ALIVE:
         handlePeriodicCommunication(packet, mainUDPSocket, client)
@@ -273,14 +280,25 @@ def handlePeriodicCommunication(ALIVE: UDP_PDU, mainUDPSocket: socket.socket, cl
         debugMsg("Error packet type received: " + typeToString(
             ALIVE.Type) + " with client " + client.Id + " in status " + statusToString(
             client.Status))
+        client.setStatus(servermodule.DISCONNECTED)
         exit(0)
 
     client.ALIVEReceived = True
     sendALIVE(mainUDPSocket, client)
 
 
-def startALIVETimer(client: Client):
+def ALIVETimer(client: Client):
+    if client.firstALIVE:
+        time.sleep(W)
+        if not client.ALIVEReceived and client.Status == servermodule.REGISTERED:
+            debugMsg("First ALIVE packet not received from client " + client.Id)
+            client.setStatus(servermodule.DISCONNECTED)
+            exit(0)
+
     while client.ALIVEsLost < 3:
+        if client.ALIVETimer.getName() != threading.current_thread().getName():
+            debugMsg("Thread ALIVE timer with name " + threading.current_thread().getName() + "exited")
+            exit(0)
         time.sleep(W)
         if client.ALIVEReceived:
             client.ALIVEReceived = False
@@ -335,7 +353,7 @@ def handleRegisterRequest(REG_REQPacket, mainUDPSocket, client: Client):
         client.setStatus(servermodule.DISCONNECTED)
         exit(0)
 
-    if REG_INFOPacket.Id_Trans != str(client.Id) or REG_INFOPacket.Id_Comm != str(Id_Comm):
+    if REG_INFOPacket.Id_Trans != str(client.Id) or REG_INFOPacket.Id_Comm != str(Id_Comm) or len(REG_INFOPacket.Data) < 7:
         debugMsg("Wrong information in packet REG_INFO from client " + client.Id)
         sendINFO_NACK(clientUDPSocket, client, "Wrong information in packet REG_INFO")
         client.setStatus(servermodule.DISCONNECTED)
@@ -346,8 +364,10 @@ def handleRegisterRequest(REG_REQPacket, mainUDPSocket, client: Client):
 
     sendINFO_ACK(clientUDPSocket, client)
     client.setStatus(servermodule.REGISTERED)
-    ALIVEThread = threading.Thread(target=startALIVETimer, args=(client,))
-    ALIVEThread.start()
+    clientALIVETimer = threading.Thread(target=ALIVETimer, args=(client,))
+    clientALIVETimer.start()
+    debugMsg("Started new ALIVE timer for client " + client.Id + " with name " + clientALIVETimer.getName())
+    client.ALIVETimer = clientALIVETimer
     clientUDPSocket.close()
     exit(0)
     #   END OF REGISTER PROCESS
@@ -392,7 +412,7 @@ def sendREG_ACK(socketToSend, client: Client):
 
 
 def searchClient(clientId):
-    for i in range(sys.getsizeof(clients)):
+    for i in range(len(clients)):
         if clients[i].Id == clientId:
             return clients[i]
 
