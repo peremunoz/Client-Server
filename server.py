@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import struct
 import sys
 from dataclasses import dataclass
@@ -223,7 +224,9 @@ def startServer():
     mainTCPSocket.bind(('', int(serverCfg.TCP)))
 
     mainUDPThread = threading.Thread(target=handleUDPConnections, args=(mainUDPSocket,))
+    mainUDPThread.setDaemon(True)
     mainTCPThread = threading.Thread(target=handleTCPConnections, args=(mainTCPSocket,))
+    mainTCPThread.setDaemon(True)
 
     mainUDPThread.start()
     mainTCPThread.start()
@@ -455,7 +458,8 @@ def handleTCPConnections(
 
 
 def handleTerminalInput():  # USER TERMINAL INPUT
-    pass
+    while 1:
+        pass
 
 
 if __name__ == "__main__":
