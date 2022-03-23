@@ -687,13 +687,12 @@ void* receiveALIVE() {
 void* handleTerminalInput() {
     char line[MAXIMUM_LINE_LENGTH];
     while (1) {
+        printf(promptColor"->\t"promptColorBold);
         fgets(line, sizeof(line), stdin);
         line[strlen(line) - 1] = ' ';
         char* token = strtok(line, " ");
         if (token == NULL) {
-            errorMsg();
-            printf("Invalid command entered!\n");
-            printCommands();
+
         } else if (strcmp(token, "stat") == 0) {
             statCommand();
         } else if (strcmp(token, "quit") == 0) {
@@ -826,7 +825,7 @@ void printCommands() {
     printf(yellowBold "\t\t\t\tCOMMANDS AVAILABLE:\n" yellow);
     printf("\t- stat\tSee the client's elements and its values.\n");
     printf("\t- set <element_id> <new_value>\tSet an element value\n");
-    printf("\t- send <element_id>\tSend an element value to the server\n");
+    printf("\t- send <element_id>\tSend an element value to the server\n" resetColor);
 }
 
 //          TCP server requests handling functions

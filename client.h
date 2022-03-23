@@ -57,5 +57,7 @@
 #define white "\033[0;37m"
 #define yellow "\033[0;33m"
 #define yellowBold "\033[0;33m"
+#define promptColor "\033[0;36m"
+#define promptColorBold "\033[1;36m"
 #define green "\033[0;32m"
 #define greenBold "\033[1;32m"
