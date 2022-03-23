@@ -30,12 +30,29 @@ class ServerCfg:
     Id: str
     UDP: int
     TCP: int
+    mainTCP: socket.socket
+    mainUDP: socket.socket
 
 
 @dataclass
 class Element:
     Id: str
-    Data: int = 0
+    Data: str = "None"
+
+    def isFrom(self, client):
+        for i in range(len(client.Elements)):
+            if client.Elements[i].Id == self.Id:
+                return True
+        return False
+
+    def store(self, client, date):
+        for i in range(len(client.Elements)):
+            if client.Elements[i].Id == self.Id:
+                client.Elements[i].Data = self.Data
+        dataFile = open(client.Id + ".data", "a")
+        dataFile.write(date.split(";")[0] + ";" + date.split(";")[1] + ";SEND_DATA;" + self.Id + ";" + self.Data)
+        okMsg("Successfully stored element " + self.Id + " value: " + self.Data + " for client " + client.Id)
+        dataFile.close()
 
 
 @dataclass
@@ -77,13 +94,36 @@ class UDP_PDU:
             bytesSent += socketToSend.sendto(packetPacked[bytesSent:], (client.IP_Address, port))
         debugMsg("Packet " + typeToString(self.Type) + " sent correctly to " + client.Id)
 
+    def incorrectALIVE(self, client):
+        if str(self.Id_Trans) != client.Id or self.Id_Comm != str(client.Id_Comm) or self.Data != "":
+            return True
+        return False
+
+
+@dataclass
+class TCP_PDU:
+    Type: str
+    Id_Trans: str
+    Id_Comm: str
+    Element: str
+    Value: str
+    Info: str
+
+    def send(self, socketToSend: socket.socket, client):
+        packetPacked = packTCP(self)
+        socketToSend.sendall(packetPacked)
+        debugMsg("Packet " + typeToString(self.Type) + " sent correctly to " + client.Id)
+
 
 #   CONSTANTS
 UDPPacketSize = 84
+TCPPacketSize = 1 + 11 + 11 + 8 + 16 + 80
 Z = 2
 T = 1  # Time between register packet
 W = 3
 X = 3
+M = 3
+V = 2
 
 #   GLOBAL VARIABLES
 serverCfg = ServerCfg
@@ -95,6 +135,10 @@ clients = []
 
 def errorMsg(text):
     print(Colors.FAIL + "[ERROR] =>\t" + text + Colors.ENDC)
+
+
+def okMsg(text):
+    print(Colors.OKCYAN + "[OK] =>\t" + text + Colors.ENDC)
 
 
 def infoMsg(text):
@@ -147,6 +191,18 @@ def typeToString(packetType):
         return "ALIVE_NACK"
     elif packetType == servermodule.ALIVE_REJ:
         return "ALIVE_REJ"
+    elif packetType == servermodule.SEND_DATA:
+        return "SEND_DATA"
+    elif packetType == servermodule.DATA_ACK:
+        return "DATA_ACK"
+    elif packetType == servermodule.DATA_NACK:
+        return "DATA_NACK"
+    elif packetType == servermodule.DATA_REJ:
+        return "DATA_REJ"
+    elif packetType == servermodule.SET_DATA:
+        return "SET_DATA"
+    elif packetType == servermodule.GET_DATA:
+        return "GET_DATA"
     else:
         return "Unknown packet type"
 
@@ -228,6 +284,9 @@ def startServer():
     mainTCPThread = threading.Thread(target=handleTCPConnections, args=(mainTCPSocket,))
     mainTCPThread.setDaemon(True)
 
+    serverCfg.mainUDP = mainUDPSocket
+    serverCfg.mainTCP = mainTCPSocket
+
     mainUDPThread.start()
     mainTCPThread.start()
     handleTerminalInput()
@@ -267,7 +326,7 @@ def switcher(bytesPacket, ip, port, mainUDPSocket):
 
 
 def handlePeriodicCommunication(ALIVE: UDP_PDU, mainUDPSocket: socket.socket, client: Client):
-    if incorrectALIVE(ALIVE, client):
+    if ALIVE.incorrectALIVE(client):
         debugMsg("Incorrect ALIVE packet received from " + client.Id)
         sendALIVE_REJ(mainUDPSocket, client)
         client.setStatus(servermodule.DISCONNECTED)
@@ -283,7 +342,6 @@ def handlePeriodicCommunication(ALIVE: UDP_PDU, mainUDPSocket: socket.socket, cl
         debugMsg("Error packet type received: " + typeToString(
             ALIVE.Type) + " with client " + client.Id + " in status " + statusToString(
             client.Status))
-        client.setStatus(servermodule.DISCONNECTED)
         exit(0)
 
     client.ALIVEReceived = True
@@ -298,25 +356,31 @@ def ALIVETimer(client: Client):
             client.setStatus(servermodule.DISCONNECTED)
             exit(0)
 
-    while client.ALIVEsLost < 3:
+    while client.ALIVEsLost < 3 and client.Status == servermodule.SEND_ALIVE:
         if client.ALIVETimer.getName() != threading.current_thread().getName():
             debugMsg("Thread ALIVE timer with name " + threading.current_thread().getName() + "exited")
             exit(0)
-        time.sleep(W)
+        time.sleep(V)
         if client.ALIVEReceived:
             client.ALIVEReceived = False
             client.ALIVEsLost = 0
         elif not client.ALIVEReceived:
             client.ALIVEsLost += 1
             debugMsg("Total lost ALIVEs: " + str(client.ALIVEsLost))
-
-    client.setStatus(servermodule.DISCONNECTED)
+    if client.ALIVEsLost == 3:
+        client.setStatus(servermodule.DISCONNECTED)
 
 
 def handleRegisterRequest(REG_REQPacket, mainUDPSocket, client: Client):
     if REG_REQPacket.Id_Comm != "0000000000" or REG_REQPacket.Data != "":
-        debugMsg("Received a REG_REQ packet with wrong information")
-        sendREG_REJ(mainUDPSocket, client.IP_Address, client.defaultUDPort, "Wrong information in packet REG_REQ")
+        if REG_REQPacket.Data != "":
+            debugMsg("Received a REG_REQ packet [DATA NOT EMPTY]")
+            sendREG_REJ(mainUDPSocket, client.IP_Address, client.defaultUDPort,
+                        "Wrong information in packet REG_REQ [DATA NOT EMPTY]")
+        else:
+            debugMsg("Received a REG_REQ packet [WRONG ID COMMUNICATION]")
+            sendREG_REJ(mainUDPSocket, client.IP_Address, client.defaultUDPort,
+                        "Wrong information in packet REG_REQ [WRONG ID COMMUNICATION]")
         client.setStatus(servermodule.DISCONNECTED)
         exit(0)
 
@@ -344,9 +408,10 @@ def handleRegisterRequest(REG_REQPacket, mainUDPSocket, client: Client):
     if len(inputs) == 0:
         debugMsg("REG_INFO packet not received from client " + client.Id)
         client.setStatus(servermodule.DISCONNECTED)
+        clientUDPSocket.close()
         exit(0)
 
-    (REG_INFOBytes, (ip, port)) = clientUDPSocket.recvfrom(UDPPacketSize, socket.MSG_WAITALL)
+    (REG_INFOBytes, (_, _)) = clientUDPSocket.recvfrom(UDPPacketSize, socket.MSG_WAITALL)
     REG_INFOPacket = unpackUDP(REG_INFOBytes)
 
     if REG_INFOPacket.Type != servermodule.REG_INFO:
@@ -354,12 +419,22 @@ def handleRegisterRequest(REG_REQPacket, mainUDPSocket, client: Client):
             REG_INFOPacket.Type) + " with client " + client.Id + " in status " + statusToString(
             client.Status))
         client.setStatus(servermodule.DISCONNECTED)
+        clientUDPSocket.close()
         exit(0)
 
-    if REG_INFOPacket.Id_Trans != str(client.Id) or REG_INFOPacket.Id_Comm != str(Id_Comm) or len(REG_INFOPacket.Data) < 7:
-        debugMsg("Wrong information in packet REG_INFO from client " + client.Id)
-        sendINFO_NACK(clientUDPSocket, client, "Wrong information in packet REG_INFO")
+    if REG_INFOPacket.Id_Trans != str(client.Id) or REG_INFOPacket.Id_Comm != str(Id_Comm) or len(
+            REG_INFOPacket.Data) < 7:
+        if REG_INFOPacket.Id_Trans != str(client.Id):
+            debugMsg("Wrong information in packet REG_INFO from client " + client.Id + "[WRONG ID TRANSMITTER]")
+            sendINFO_NACK(clientUDPSocket, client, "Wrong information in packet REG_INFO [WRONG ID TRANSMITTER]")
+        elif REG_INFOPacket.Id_Comm != str(Id_Comm):
+            debugMsg("Wrong information in packet REG_INFO from client " + client.Id + "[WRONG ID COMMUNICATION]")
+            sendINFO_NACK(clientUDPSocket, client, "Wrong information in packet REG_INFO [WRONG ID COMMUNICATION]")
+        else:
+            debugMsg("Wrong information in packet REG_INFO from client " + client.Id + "[WRONG ELEMENT INFO]")
+            sendINFO_NACK(clientUDPSocket, client, "Wrong information in packet REG_INFO [WRONG ELEMENT INFO]")
         client.setStatus(servermodule.DISCONNECTED)
+        clientUDPSocket.close()
         exit(0)
 
     debugMsg("Correct REG_INFO packet received from " + client.Id)
@@ -368,9 +443,9 @@ def handleRegisterRequest(REG_REQPacket, mainUDPSocket, client: Client):
     sendINFO_ACK(clientUDPSocket, client)
     client.setStatus(servermodule.REGISTERED)
     clientALIVETimer = threading.Thread(target=ALIVETimer, args=(client,))
+    client.ALIVETimer = clientALIVETimer
     clientALIVETimer.start()
     debugMsg("Started new ALIVE timer for client " + client.Id + " with name " + clientALIVETimer.getName())
-    client.ALIVETimer = clientALIVETimer
     clientUDPSocket.close()
     exit(0)
     #   END OF REGISTER PROCESS
@@ -381,12 +456,6 @@ def sendALIVE(socketToSend, client: Client):
     ALIVEPacket.send(socketToSend, client, client.defaultUDPort)
 
 
-def incorrectALIVE(ALIVEPacket, client):
-    if str(ALIVEPacket.Id_Trans) != client.Id or ALIVEPacket.Id_Comm != str(client.Id_Comm) or ALIVEPacket.Data != "":
-        return True
-    return False
-
-
 def sendALIVE_REJ(socketToSend, client: Client):
     ALIVE_REJPacket = UDP_PDU(servermodule.ALIVE_REJ, serverCfg.Id, client.Id_Comm, "Incorrect ALIVE received")
     ALIVE_REJPacket.send(socketToSend, client, client.defaultUDPort)
@@ -395,7 +464,7 @@ def sendALIVE_REJ(socketToSend, client: Client):
 def storeREG_INFOData(data, client: Client):
     client.TCP = data.split(",")[0]
     for i in range(len(data.split(";"))):
-        element = Element(data.split(",")[1].split(";")[i])
+        element = Element(data.split(",")[1].split(";")[i], "")
         client.Elements.append(element)
 
 
@@ -420,7 +489,7 @@ def searchClient(clientId):
             return clients[i]
 
 
-def packetFromAuthedUser(packet: UDP_PDU):
+def packetFromAuthedUser(packet):
     userToSearch = packet.Id_Trans
     for i in range(len(clients)):
         if clients[i].Id == userToSearch:
@@ -434,7 +503,7 @@ def sendREG_REJ(socketToSend, ip, port, reason):
     bytesSent = socketToSend.sendto(REG_REJPacked, (ip, port))
     while bytesSent != UDPPacketSize:
         bytesSent += socketToSend.sendto(REG_REJPacked[bytesSent:], (ip, port))
-    debugMsg("Packet REG_REJ sent correctly to " + str(ip))
+    debugMsg("Packet REG_REJ sent correctly to " + str(ip) + ":" + str(port))
 
 
 def packUDP(packet: UDP_PDU):
@@ -452,9 +521,98 @@ def unpackUDP(bytesReceived: bytes):
     return UDP_PDU(packetType, packetId_Trans, packetId_Comm, packetData)
 
 
-def handleTCPConnections(
-        mainTCPSocket):  # HANDLING TCP CONNECTIONS AND THREADING EVERY NEW CONNECTIONS AND SAVING IT TO CLIENT CLASS
-    pass
+def handleTCPConnections(mainTCPSocket: socket.socket):
+    while 1:
+        mainTCPSocket.listen(1)
+        (clientTCPSocket, (ip, port)) = mainTCPSocket.accept()
+        debugMsg("New thread created for attending TCP in port" + str(port))
+        clientTCPThread = threading.Thread(target=handleTCPConnection, args=(clientTCPSocket, ip, port,))
+        clientTCPThread.start()
+
+
+def handleTCPConnection(clientSocket: socket.socket, ip, port):
+    clientSocket.settimeout(M)
+    try:
+        bytesReceived = clientSocket.recv(TCPPacketSize, socket.MSG_WAITALL)
+    except socket.timeout:
+        debugMsg("Packet not received from " + str(ip) + ":" + str(port) + " via TCP")
+        clientSocket.close()
+        exit(0)
+
+    packetReceived = unpackTCP(bytesReceived)
+
+    if packetReceived.Type != servermodule.SEND_DATA:
+        debugMsg("Packet of type " + packetReceived.Type + " received from TCP connection!")
+        clientSocket.close()
+        exit(0)
+
+    if not packetFromAuthedUser(packetReceived):
+        debugMsg("Received a packet from unknown user via TCP")
+        DATA_REJ = TCP_PDU(servermodule.DATA_REJ, serverCfg.Id, "0000000000", "", "", "Wrong client Id")
+        sendDATA_REJ(DATA_REJ, clientSocket, ip, port)
+        clientSocket.close()
+        exit(0)
+
+    client = searchClient(packetReceived.Id_Trans)
+
+    if packetReceived.Id_Comm != str(client.Id_Comm):
+        debugMsg("Received an incorrect SEND_DATA packet [WRONG COMMUNICATION ID]")
+        DATA_REJ = TCP_PDU(servermodule.DATA_REJ, serverCfg.Id, "0000000000", packetReceived.Element,
+                           packetReceived.Value, "[WRONG COMMUNICATION ID]")
+        DATA_REJ.send(clientSocket, client)
+        client.setStatus(servermodule.DISCONNECTED)
+        clientSocket.close()
+        exit(0)
+
+    if client.Status != servermodule.SEND_ALIVE:
+        debugMsg("Received SEND_DATA packet in status " + statusToString(client.Status))
+        clientSocket.close()
+        exit(0)
+
+    element = Element(packetReceived.Element, packetReceived.Value)
+
+    if not element.isFrom(client):
+        debugMsg("Received SEND_DATA packet with an element that doesn't match any of the stored")
+        DATA_NACK = TCP_PDU(servermodule.DATA_NACK, serverCfg.Id, client.Id_Comm, packetReceived.Element,
+                            packetReceived.Value, "Element" + packetReceived.Element + "is not from client")
+        DATA_NACK.send(clientSocket, client)
+        clientSocket.close()
+        exit(0)
+
+    debugMsg("Correct SEND_DATA packet received from client " + client.Id)
+    element.store(client, packetReceived.Info)
+
+    DATA_ACK = TCP_PDU(servermodule.DATA_ACK, serverCfg.Id, client.Id_Comm, packetReceived.Element,
+                       packetReceived.Value, packetReceived.Info)
+    DATA_ACK.send(clientSocket, client)
+
+    clientSocket.close()
+    debugMsg("Ended thread for attending TCP requests from port " + str(port))
+    exit(0)
+
+
+def sendDATA_REJ(DATA_REJPacket, socketToSend, ip, port):
+    DATA_REJPacked = packTCP(DATA_REJPacket)
+    socketToSend.sendall(DATA_REJPacked)
+    debugMsg("Packet DATA_REJ sent correctly to " + str(ip) + ":" + str(port))
+
+
+def unpackTCP(bytesReceived: bytes):
+    unpackedPacket = struct.unpack('B 11s 11s 8s 16s 80s', bytesReceived)
+    packetType = unpackedPacket[0]
+    packetId_Trans = unpackedPacket[1].split(b"\x00")[0].decode()
+    packetId_Comm = unpackedPacket[2].split(b"\x00")[0].decode()
+    packetElement = unpackedPacket[3].split(b"\x00")[0].decode()
+    packetElementValue = unpackedPacket[4].split(b"\x00")[0].decode()
+    packetInfo = unpackedPacket[5].split(b"\x00")[0].decode()
+    return TCP_PDU(packetType, packetId_Trans, packetId_Comm, packetElement, packetElementValue, packetInfo)
+
+
+def packTCP(packet: TCP_PDU):
+    packedPacket = struct.pack('B 11s 11s 8s 16s 80s', packet.Type, str(packet.Id_Trans).encode(),
+                               str(packet.Id_Comm).encode(), str(packet.Element).encode(),
+                               str(packet.Value).encode(), str(packet.Info).encode())
+    return packedPacket
 
 
 def handleTerminalInput():  # USER TERMINAL INPUT
@@ -463,7 +621,13 @@ def handleTerminalInput():  # USER TERMINAL INPUT
 
 
 if __name__ == "__main__":
-    checkParams()
-    readCfgFile()
-    readAuthFile()
-    startServer()
+    try:
+        checkParams()
+        readCfgFile()
+        readAuthFile()
+        startServer()
+    except KeyboardInterrupt:
+        serverCfg.mainTCP.close()
+        serverCfg.mainUDP.close()
+        print(Colors.WARNING + "\n[WARNING] =>\tSERVER EXITED ABRUPTLY")
+        exit(0)

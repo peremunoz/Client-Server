@@ -1,7 +1,6 @@
 #include "client.h"
 
 //  Constants
-#define TIME_TO_WAIT 3
 #define MAXIMUM_LINE_LENGTH 255
 #define P 2
 #define Q 4
@@ -186,7 +185,6 @@ void relogin_handler(int signal) {
     if (signal == SIGUSR1) {
         pthread_cancel(terminalThread);
         pthread_cancel(sendAliveThread);
-        sleep(TIME_TO_WAIT);        //  Added some pause time between signups to server for avoiding flooding requests
         login();
     }
 }
@@ -467,7 +465,6 @@ void processREG_ACK(UDP packet) {
         errorMsg();
         printf("Wrong client status or wrong packet!!\n");
         login();
-        sleep(TIME_TO_WAIT);
         return;
     }
     //  Copy the communication ID, the server ID and the server IP for securing network purposes
@@ -521,7 +518,6 @@ void processREG_ACK(UDP packet) {
         processPacketType(packet);
         return;
     }
-    sleep(TIME_TO_WAIT);
     login();
 }
 
