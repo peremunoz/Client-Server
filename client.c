@@ -687,7 +687,7 @@ void* receiveALIVE() {
 void* handleTerminalInput() {
     char line[MAXIMUM_LINE_LENGTH];
     while (1) {
-        printf(promptColor"->\t"promptColorBold);
+        printf(promptColor"→\t"promptColorBold);
         fgets(line, sizeof(line), stdin);
         line[strlen(line) - 1] = ' ';
         char* token = strtok(line, " ");

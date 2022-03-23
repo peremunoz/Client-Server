@@ -5,3 +5,4 @@ cmake-build-debug
 CMakeLists.txt
 .idea
 client
+*.data
