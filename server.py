@@ -623,9 +623,9 @@ def handleTerminalInput():  # USER TERMINAL INPUT
         elif line[0] == "list":
             listCommand()
         elif line[0] == "set":
-            setCommand(line[0:])
+            setCommand(line[1:])
         elif line[0] == "get":
-            getCommand(line[0:])
+            getCommand(line[1:])
         elif line[0] == "quit":
             quitCommand()
         else:
@@ -675,7 +675,7 @@ def setCommand(line):
     clientSocket.bind(('', 0))
 
     try:
-        clientSocket.connect((client.IP_Address, client.TCP))
+        clientSocket.connect((client.IP_Address, int(client.TCP)))
     except socket.error:
         errorMsg("Can't connect with client for sending SET_DATA packet!")
         client.setStatus(servermodule.DISCONNECTED)
@@ -696,10 +696,9 @@ def setCommand(line):
         return
 
     packet = unpackTCP(packetInBytes)
-
-    if not packet.Id_Trans != client.Id or packet.Id_Comm != client.Id_Comm or packet.Element != element.Id:
+    if packet.Id_Trans != client.Id or packet.Id_Comm != str(client.Id_Comm) or packet.Element != element.Id:
         debugMsg("Received an incorrect " + typeToString(packet.Type) + " from client " + client.Id)
-        client.setStatuss(servermodule.DISCONNECTED)
+        client.setStatus(servermodule.DISCONNECTED)
         clientSocket.close()
         return
 
@@ -715,10 +714,9 @@ def setCommand(line):
         clientSocket.close()
         return
 
-    if packet.Type == servermodule.DATA_NACK:
+    if packet.Type == servermodule.DATA_ACK:
         debugMsg("Received a DATA_ACK packet from " + client.Id)
         element.store(client, packet.Info, packet.Type)
-        okMsg("Successfully stored " + element.Id + " from client " + client.Id + " with value " + element.Value)
 
     clientSocket.close()
 
@@ -774,7 +772,7 @@ def getCommand(line):
 
     packet = unpackTCP(packetInBytes)
 
-    if not packet.Id_Trans != client.Id or packet.Id_Comm != client.Id_Comm or packet.Element != element.Id:
+    if packet.Id_Trans != client.Id or packet.Id_Comm != client.Id_Comm or packet.Element != element.Id:
         debugMsg("Received an incorrect " + typeToString(packet.Type) + " from client " + client.Id)
         client.setStatuss(servermodule.DISCONNECTED)
         clientSocket.close()
@@ -792,7 +790,7 @@ def getCommand(line):
         clientSocket.close()
         return
 
-    if packet.Type == servermodule.DATA_NACK:
+    if packet.Type == servermodule.DATA_ACK:
         debugMsg("Received a DATA_ACK packet from " + client.Id)
         element.store(client, packet.Info, packet.Type)
         okMsg("Successfully stored " + element.Id + " from client " + client.Id + " with value " + element.Value)
