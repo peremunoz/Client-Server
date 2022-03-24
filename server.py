@@ -50,7 +50,7 @@ class Element:
             if client.Elements[i].Id == self.Id:
                 client.Elements[i].Value = self.Value
         dataFile = open(client.Id + ".data", "a")
-        dataFile.write(date.split(";")[0] + ";" + date.split(";")[1] + ";" + typeToString(packetType) + ";" + self.Id + ";" + self.Value)
+        dataFile.write(date.split(";")[0] + ";" + date.split(";")[1] + ";" + typeToString(packetType) + ";" + self.Id + ";" + self.Value + "\n")
         okMsg("Successfully stored element " + self.Id + " value: " + self.Value + " for client " + client.Id)
         dataFile.close()
 
@@ -618,7 +618,7 @@ def handleTerminalInput():  # USER TERMINAL INPUT
     while 1:
         command = input(Colors.CYAN + "→\t")
         line = command.split(" ")
-        if len(line) == 0:
+        if len(line[0]) < 1:
             continue
         elif line[0] == "list":
             listCommand()
@@ -716,7 +716,7 @@ def setCommand(line):
 
     if packet.Type == servermodule.DATA_ACK:
         debugMsg("Received a DATA_ACK packet from " + client.Id)
-        element.store(client, packet.Info, packet.Type)
+        element.store(client, packet.Info, SET_DATA.Type)
 
     clientSocket.close()
 
@@ -750,7 +750,7 @@ def getCommand(line):
     clientSocket.bind(('', 0))
 
     try:
-        clientSocket.connect((client.IP_Address, client.TCP))
+        clientSocket.connect((client.IP_Address, int(client.TCP)))
     except socket.error:
         errorMsg("Can't connect with client for sending GET_DATA packet!")
         client.setStatus(servermodule.DISCONNECTED)
@@ -772,7 +772,7 @@ def getCommand(line):
 
     packet = unpackTCP(packetInBytes)
 
-    if packet.Id_Trans != client.Id or packet.Id_Comm != client.Id_Comm or packet.Element != element.Id:
+    if packet.Id_Trans != client.Id or packet.Id_Comm != str(client.Id_Comm) or packet.Element != element.Id:
         debugMsg("Received an incorrect " + typeToString(packet.Type) + " from client " + client.Id)
         client.setStatuss(servermodule.DISCONNECTED)
         clientSocket.close()
@@ -792,14 +792,21 @@ def getCommand(line):
 
     if packet.Type == servermodule.DATA_ACK:
         debugMsg("Received a DATA_ACK packet from " + client.Id)
-        element.store(client, packet.Info, packet.Type)
-        okMsg("Successfully stored " + element.Id + " from client " + client.Id + " with value " + element.Value)
+        element.store(client, packet.Info, GET_DATA.Type)
 
     clientSocket.close()
 
 
 def printAvailableCommands():
-    pass
+    print(Colors.UNDERLINE + "\tCOMMANDS AVAILABLE:" + Colors.END)
+    print(Colors.CYAN + "\t➵ set <client_id> <element_id> <value>")
+    print("\t\tSets a value to a client element")
+    print("\t➵ get <client_id> <element_id>")
+    print("\t\tGets the value from a client element")
+    print("\t➵ list")
+    print("\t\tLists all the clients with its stats, comm. id, ip addresses and elements")
+    print("\t➵ quit")
+    print("\t\tExits the server closing all the buffers, sockets, etc.")
 
 
 def listCommand():
