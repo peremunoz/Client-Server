@@ -37,7 +37,7 @@ class ServerCfg:
 @dataclass
 class Element:
     Id: str
-    Data: str = "None"
+    Value: str = "None"
 
     def isFrom(self, client):
         for i in range(len(client.Elements)):
@@ -45,13 +45,13 @@ class Element:
                 return True
         return False
 
-    def store(self, client, date):
+    def store(self, client, date, packetType):
         for i in range(len(client.Elements)):
             if client.Elements[i].Id == self.Id:
-                client.Elements[i].Data = self.Data
+                client.Elements[i].Value = self.Value
         dataFile = open(client.Id + ".data", "a")
-        dataFile.write(date.split(";")[0] + ";" + date.split(";")[1] + ";SEND_DATA;" + self.Id + ";" + self.Data)
-        okMsg("Successfully stored element " + self.Id + " value: " + self.Data + " for client " + client.Id)
+        dataFile.write(date.split(";")[0] + ";" + date.split(";")[1] + ";" + typeToString(packetType) + ";" + self.Id + ";" + self.Value)
+        okMsg("Successfully stored element " + self.Id + " value: " + self.Value + " for client " + client.Id)
         dataFile.close()
 
 
@@ -59,8 +59,8 @@ class Element:
 class Client:
     Id: str
     Status: str = servermodule.DISCONNECTED
-    Id_Comm: str = 0
-    IP_Address: str = 0
+    Id_Comm: str = ""
+    IP_Address: str = ""
     defaultUDPort: int = 0
     firstALIVE: bool = True
     ALIVEReceived: bool = False
@@ -486,6 +486,7 @@ def searchClient(clientId):
     for i in range(len(clients)):
         if clients[i].Id == clientId:
             return clients[i]
+    return None
 
 
 def packetFromAuthedUser(packet):
@@ -579,7 +580,7 @@ def handleTCPConnection(clientSocket: socket.socket, ip, port):
         return
 
     debugMsg("Correct SEND_DATA packet received from client " + client.Id)
-    element.store(client, packetReceived.Info)
+    element.store(client, packetReceived.Info, packetReceived.Type)
 
     DATA_ACK = TCP_PDU(servermodule.DATA_ACK, serverCfg.Id, client.Id_Comm, packetReceived.Element,
                        packetReceived.Value, client.Id)
@@ -620,7 +621,201 @@ def handleTerminalInput():  # USER TERMINAL INPUT
         if len(line) == 0:
             continue
         elif line[0] == "list":
-            print("LIST COMMAND ENTERED")
+            listCommand()
+        elif line[0] == "set":
+            setCommand(line[0:])
+        elif line[0] == "get":
+            getCommand(line[0:])
+        elif line[0] == "quit":
+            quitCommand()
+        else:
+            errorMsg("The command entered is incorrect!")
+            printAvailableCommands()
+
+
+def quitCommand():
+    exit(0)
+
+
+def setCommand(line):
+    if len(line) < 3:
+        errorMsg("Error usage of set command!!\n  set <client_id> <element_id> <value>")
+        return
+
+    clientId = line[0]
+    elementId = line[1]
+    elementValue = line[2]
+
+    client = searchClient(clientId)
+    element = Element(elementId, elementValue)
+
+    if client is None:
+        errorMsg("Client id not exists!")
+        return
+
+    if element.isFrom(client) is False:
+        errorMsg(element.Id + " is not from " + client.Id)
+        return
+
+    if len(elementValue) < 1 or len(elementValue) > 15:
+        errorMsg("Element value can't be None or greater than 15 numbers")
+        return
+
+    if elementId.split("-")[2] == "O":
+        errorMsg("You can't modify a sensor element!!")
+        return
+
+    if client.Status != servermodule.SEND_ALIVE:
+        errorMsg("Client " + client.Id + "isn't in status SEND_ALIVE. Can't do the operation!")
+        return
+
+    #   Correct set command entered
+
+    clientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    clientSocket.bind(('', 0))
+
+    try:
+        clientSocket.connect((client.IP_Address, client.TCP))
+    except socket.error:
+        errorMsg("Can't connect with client for sending SET_DATA packet!")
+        client.setStatus(servermodule.DISCONNECTED)
+        clientSocket.close()
+        return
+
+    debugMsg("TCP connection established with " + client.Id)
+
+    SET_DATA = TCP_PDU(servermodule.SET_DATA, serverCfg.Id, client.Id_Comm, element.Id, element.Value, client.Id)
+    SET_DATA.send(clientSocket, client)
+
+    clientSocket.settimeout(M)
+    try:
+        packetInBytes = clientSocket.recv(TCPPacketSize, socket.MSG_WAITALL)
+    except socket.timeout:
+        print(Colors.WARNING + "Client " + client.Id + "didn't answer to SET_DATA packet... resending information...")
+        clientSocket.close()
+        return
+
+    packet = unpackTCP(packetInBytes)
+
+    if not packet.Id_Trans != client.Id or packet.Id_Comm != client.Id_Comm or packet.Element != element.Id:
+        debugMsg("Received an incorrect " + typeToString(packet.Type) + " from client " + client.Id)
+        client.setStatuss(servermodule.DISCONNECTED)
+        clientSocket.close()
+        return
+
+    if packet.Type == servermodule.DATA_NACK:
+        print(Colors.WARNING + "Received a DATA_NACK packet from " + client.Id + ". Resending information...")
+        clientSocket.close()
+        return
+
+    if packet.Type == servermodule.DATA_REJ:
+        debugMsg("Received a DATA_REJ packet from " + client.Id)
+        errorMsg("Element value rejected from client " + client.Id)
+        client.setStatus(servermodule.DISCONNECTED)
+        clientSocket.close()
+        return
+
+    if packet.Type == servermodule.DATA_NACK:
+        debugMsg("Received a DATA_ACK packet from " + client.Id)
+        element.store(client, packet.Info, packet.Type)
+        okMsg("Successfully stored " + element.Id + " from client " + client.Id + " with value " + element.Value)
+
+    clientSocket.close()
+
+
+def getCommand(line):
+    if len(line) < 2:
+        errorMsg("Error usage of get command!!\n  get <client_id> <element_id>")
+        return
+
+    clientId = line[0]
+    elementId = line[1]
+
+    client = searchClient(clientId)
+    element = Element(elementId)
+
+    if client is None:
+        errorMsg("Client id not exists!")
+        return
+
+    if element.isFrom(client) is False:
+        errorMsg(element.Id + " is not from " + client.Id)
+        return
+
+    if client.Status != servermodule.SEND_ALIVE:
+        errorMsg("Client " + client.Id + "isn't in status SEND_ALIVE. Can't do the operation!")
+        return
+
+    #   Correct get command entered
+
+    clientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    clientSocket.bind(('', 0))
+
+    try:
+        clientSocket.connect((client.IP_Address, client.TCP))
+    except socket.error:
+        errorMsg("Can't connect with client for sending GET_DATA packet!")
+        client.setStatus(servermodule.DISCONNECTED)
+        clientSocket.close()
+        return
+
+    debugMsg("TCP connection established with " + client.Id)
+
+    GET_DATA = TCP_PDU(servermodule.GET_DATA, serverCfg.Id, client.Id_Comm, element.Id, "", client.Id)
+    GET_DATA.send(clientSocket, client)
+
+    clientSocket.settimeout(M)
+    try:
+        packetInBytes = clientSocket.recv(TCPPacketSize, socket.MSG_WAITALL)
+    except socket.timeout:
+        print(Colors.WARNING + "Client " + client.Id + "didn't answer to GET_DATA packet... resending information...")
+        clientSocket.close()
+        return
+
+    packet = unpackTCP(packetInBytes)
+
+    if not packet.Id_Trans != client.Id or packet.Id_Comm != client.Id_Comm or packet.Element != element.Id:
+        debugMsg("Received an incorrect " + typeToString(packet.Type) + " from client " + client.Id)
+        client.setStatuss(servermodule.DISCONNECTED)
+        clientSocket.close()
+        return
+
+    if packet.Type == servermodule.DATA_NACK:
+        print(Colors.WARNING + "Received a DATA_NACK packet from " + client.Id + ". Resending information...")
+        clientSocket.close()
+        return
+
+    if packet.Type == servermodule.DATA_REJ:
+        debugMsg("Received a DATA_REJ packet from " + client.Id)
+        errorMsg("Element value rejected from client " + client.Id)
+        client.setStatus(servermodule.DISCONNECTED)
+        clientSocket.close()
+        return
+
+    if packet.Type == servermodule.DATA_NACK:
+        debugMsg("Received a DATA_ACK packet from " + client.Id)
+        element.store(client, packet.Info, packet.Type)
+        okMsg("Successfully stored " + element.Id + " from client " + client.Id + " with value " + element.Value)
+
+    clientSocket.close()
+
+
+def printAvailableCommands():
+    pass
+
+
+def listCommand():
+    print(Colors.WARNING + "╔═════════════════════════════════════════════════════════════════════════════")
+    print("║ CLIENT ID ║   STATUS   ║ COMM. ID\t║ IP ADDRESS\t║      ELEMENTS")
+    print("╠═══════════╬════════════╬══════════════╬═══════════════╬═════════════════════")
+    print("╚═══════════╩════════════╩══════════════╩═══════════════╩═════════════════════")
+    for i in range(len(clients)):
+        actualClient = clients[i]
+        print(" " + actualClient.Id + "  " + statusToString(actualClient.Status) + "\t   " + str(
+            actualClient.Id_Comm) + "\t   " + str(actualClient.IP_Address) + "\t   ", end="")
+        for k in range(len(actualClient.Elements)):
+            print(actualClient.Elements[k].Id, end=" ")
+        print("")
 
 
 if __name__ == "__main__":
