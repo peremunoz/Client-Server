@@ -531,13 +531,14 @@ def handleTCPConnections(mainTCPSocket: socket.socket):
 
 
 def handleTCPConnection(clientSocket: socket.socket, ip, port):
-    clientSocket.settimeout(M)
-    try:
-        bytesReceived = clientSocket.recv(TCPPacketSize, socket.MSG_WAITALL)
-    except socket.timeout:
+
+    inputs, outputs, excepts = select.select([clientSocket], [], [], M)
+    if len(inputs) == 0:
         debugMsg("Packet not received from " + str(ip) + ":" + str(port) + " via TCP")
         clientSocket.close()
         return
+
+    bytesReceived = clientSocket.recv(TCPPacketSize, socket.MSG_WAITALL)
 
     packetReceived = unpackTCP(bytesReceived)
 
@@ -616,7 +617,7 @@ def packTCP(packet: TCP_PDU):
 
 def handleTerminalInput():  # USER TERMINAL INPUT
     while 1:
-        command = input(Colors.CYAN + "→\t")
+        command = input(Colors.CYAN + "➪\t")
         line = command.split(" ")
         if len(line[0]) < 1:
             continue
@@ -687,13 +688,13 @@ def setCommand(line):
     SET_DATA = TCP_PDU(servermodule.SET_DATA, serverCfg.Id, client.Id_Comm, element.Id, element.Value, client.Id)
     SET_DATA.send(clientSocket, client)
 
-    clientSocket.settimeout(M)
-    try:
-        packetInBytes = clientSocket.recv(TCPPacketSize, socket.MSG_WAITALL)
-    except socket.timeout:
+    inputs, outputs, excepts = select.select([clientSocket], [], [], M)
+    if len(inputs) == 0:
         print(Colors.WARNING + "Client " + client.Id + "didn't answer to SET_DATA packet... resending information...")
         clientSocket.close()
         return
+
+    packetInBytes = clientSocket.recv(TCPPacketSize, socket.MSG_WAITALL)
 
     packet = unpackTCP(packetInBytes)
     if packet.Id_Trans != client.Id or packet.Id_Comm != str(client.Id_Comm) or packet.Element != element.Id:
@@ -762,19 +763,19 @@ def getCommand(line):
     GET_DATA = TCP_PDU(servermodule.GET_DATA, serverCfg.Id, client.Id_Comm, element.Id, "", client.Id)
     GET_DATA.send(clientSocket, client)
 
-    clientSocket.settimeout(M)
-    try:
-        packetInBytes = clientSocket.recv(TCPPacketSize, socket.MSG_WAITALL)
-    except socket.timeout:
-        print(Colors.WARNING + "Client " + client.Id + "didn't answer to GET_DATA packet... resending information...")
+    inputs, outputs, excepts = select.select([clientSocket], [], [], M)
+    if len(inputs) == 0:
+        print(Colors.WARNING + "Client " + client.Id + "didn't answer to SET_DATA packet... resending information...")
         clientSocket.close()
         return
+
+    packetInBytes = clientSocket.recv(TCPPacketSize, socket.MSG_WAITALL)
 
     packet = unpackTCP(packetInBytes)
 
     if packet.Id_Trans != client.Id or packet.Id_Comm != str(client.Id_Comm) or packet.Element != element.Id:
         debugMsg("Received an incorrect " + typeToString(packet.Type) + " from client " + client.Id)
-        client.setStatuss(servermodule.DISCONNECTED)
+        client.setStatus(servermodule.DISCONNECTED)
         clientSocket.close()
         return
 
@@ -810,7 +811,7 @@ def printAvailableCommands():
 
 
 def listCommand():
-    print(Colors.WARNING + "╔═════════════════════════════════════════════════════════════════════════════")
+    print(Colors.WARNING + "╔═══════════╦════════════╦══════════════╦═══════════════╦═════════════════════")
     print("║ CLIENT ID ║   STATUS   ║ COMM. ID\t║ IP ADDRESS\t║      ELEMENTS")
     print("╠═══════════╬════════════╬══════════════╬═══════════════╬═════════════════════")
     print("╚═══════════╩════════════╩══════════════╩═══════════════╩═════════════════════")
