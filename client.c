@@ -326,13 +326,6 @@ void openUDPSocket() {
         debugMsg();
         printf("Socket successfully created and bound.\n");
     }
-
-    if (debug_mode) {
-        debugMsg();
-        printf("Server address set to:\n"
-               "IP: %s\n"
-               "Port: %hu\n", inet_ntoa(serverAddrUDP.sin_addr), ntohs(serverAddrUDP.sin_port));
-    }
 }
 
 //  Login the client into the server
@@ -993,7 +986,8 @@ void receiveDATAPacket(char elementId[8]) {
 //  Checks if the server information stored and the received in the packet matches
 bool correctServerDataTCP(TCP packet) {
     if (strcmp(packet.Id_Trans, serverData.Id_Trans) == 0
-        && strcmp(packet.Id_Comm, serverData.Id_Comm) == 0) {
+        && strcmp(packet.Id_Comm, serverData.Id_Comm) == 0
+        && strcmp(packet.Info, clientData.Id) == 0) {
         return true;
     }
     return false;
@@ -1163,6 +1157,8 @@ char* getTypeOfPacketUDP(UDP packet) {
     char* charPointer;
     if (packet.Type == REG_ACK) {
         return charPointer="REG_ACK";
+    } else if (packet.Type == REG_REQ) {
+        return charPointer="REG_REQ";
     } else if (packet.Type == REG_NACK) {
         return charPointer="REG_NACK";
     } else if (packet.Type == REG_REJ) {
