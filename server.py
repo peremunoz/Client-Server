@@ -765,7 +765,7 @@ def getCommand(line):
 
     inputs, outputs, excepts = select.select([clientSocket], [], [], M)
     if len(inputs) == 0:
-        print(Colors.WARNING + "Client " + client.Id + "didn't answer to SET_DATA packet... resending information...")
+        print(Colors.WARNING + "Client " + client.Id + "didn't answer to GET_DATA packet... resending information...")
         clientSocket.close()
         return
 
