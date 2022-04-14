@@ -11,7 +11,7 @@ import select
 import time
 
 
-#   COLORS CLASS
+#   Colors Class for formatting purposes
 class Colors:
     HEADER = '\033[95m'
     BLUE = '\033[94m'
@@ -24,7 +24,7 @@ class Colors:
     UNDERLINE = '\033[4m'
 
 
-#   DATACLASSES
+#   Dataclasses
 @dataclass
 class ServerCfg:
     Id: str
@@ -50,7 +50,8 @@ class Element:
             if client.Elements[i].Id == self.Id:
                 client.Elements[i].Value = self.Value
         dataFile = open(client.Id + ".data", "a")
-        dataFile.write(date.split(";")[0] + ";" + date.split(";")[1] + ";" + typeToString(packetType) + ";" + self.Id + ";" + self.Value + "\n")
+        dataFile.write(date.split(";")[0] + ";" + date.split(";")[1] + ";" + typeToString(
+            packetType) + ";" + self.Id + ";" + self.Value + "\n")
         okMsg("Successfully stored element " + self.Id + " value: " + self.Value + " for client " + client.Id)
         dataFile.close()
 
@@ -115,17 +116,17 @@ class TCP_PDU:
         debugMsg("Packet " + typeToString(self.Type) + " sent correctly to " + client.Id)
 
 
-#   CONSTANTS
+#   Constants
 UDPPacketSize = 84
 TCPPacketSize = 1 + 11 + 11 + 8 + 16 + 80
 Z = 2
-T = 1  # Time between register packet
+T = 1
 W = 3
 X = 3
 M = 3
 V = 2
 
-#   GLOBAL VARIABLES
+#   Global variables
 serverCfg = ServerCfg
 cfgFile = "server.cfg"
 authFile = "bbdd_dev.dat"
@@ -133,92 +134,7 @@ debug_mode = False
 clients = []
 
 
-def errorMsg(text):
-    print(Colors.FAIL + "[ERROR] =>\t" + text + Colors.END)
-
-
-def okMsg(text):
-    print(Colors.GREEN + "[OK] =>\t" + text + Colors.END)
-
-
-def infoMsg(text):
-    print("[INFO] =>\t" + Colors.UNDERLINE + Colors.HEADER + text + Colors.END)
-
-
-def debugMsg(text):
-    if debug_mode:
-        print(Colors.BLUE + "[DEBUG] =>\t" + text + Colors.END)
-
-
-def statusToString(status):
-    if status == servermodule.DISCONNECTED:
-        return "DISCONNECTED"
-    elif status == servermodule.WAIT_INFO:
-        return "WAIT_INFO"
-    elif status == servermodule.REGISTERED:
-        return "REGISTERED"
-    elif status == servermodule.NOT_REGISTERED:
-        return "NOT_REGISTERED"
-    elif status == servermodule.WAIT_ACK_REG:
-        return "WAIT_ACK_REG"
-    elif status == servermodule.WAIT_ACK_INFO:
-        return "WAIT_ACK_INFO"
-    elif status == servermodule.SEND_ALIVE:
-        return "SEND_ALIVE"
-    else:
-        return "Unknown status"
-
-
-def typeToString(packetType):
-    if packetType == servermodule.REG_REQ:
-        return "REG_REQ"
-    elif packetType == servermodule.REG_ACK:
-        return "REG_ACK"
-    elif packetType == servermodule.REG_NACK:
-        return "REG_NACK"
-    elif packetType == servermodule.REG_REJ:
-        return "REG_REJ"
-    elif packetType == servermodule.REG_INFO:
-        return "REG_INFO"
-    elif packetType == servermodule.INFO_ACK:
-        return "INFO_ACK"
-    elif packetType == servermodule.INFO_NACK:
-        return "INFO_NACK"
-    elif packetType == servermodule.INFO_REJ:
-        return "INFO_REJ"
-    elif packetType == servermodule.ALIVE:
-        return "ALIVE"
-    elif packetType == servermodule.ALIVE_NACK:
-        return "ALIVE_NACK"
-    elif packetType == servermodule.ALIVE_REJ:
-        return "ALIVE_REJ"
-    elif packetType == servermodule.SEND_DATA:
-        return "SEND_DATA"
-    elif packetType == servermodule.DATA_ACK:
-        return "DATA_ACK"
-    elif packetType == servermodule.DATA_NACK:
-        return "DATA_NACK"
-    elif packetType == servermodule.DATA_REJ:
-        return "DATA_REJ"
-    elif packetType == servermodule.SET_DATA:
-        return "SET_DATA"
-    elif packetType == servermodule.GET_DATA:
-        return "GET_DATA"
-    else:
-        return "Unknown packet type"
-
-
-def checkCfgFile(filename):
-    if filename.find(".cfg") < 0:
-        return False
-    return True
-
-
-def checkAuthFile(filename):
-    if filename.find(".dat") < 0:
-        return False
-    return True
-
+#       CHECK PARAMETERS FUNCTIONS
 
 def checkParams():
     i = 1
@@ -248,6 +164,20 @@ def checkParams():
         i += 1
 
 
+def checkCfgFile(filename):
+    if filename.find(".cfg") < 0:
+        return False
+    return True
+
+
+def checkAuthFile(filename):
+    if filename.find(".dat") < 0:
+        return False
+    return True
+
+
+#       READING CONFIGURATION FUNCTIONS
+
 def readCfgFile():
     file = open(cfgFile, "r")
     lines = file.read().splitlines()
@@ -273,6 +203,8 @@ def readAuthFile():
         clients.append(client)
 
 
+#       SERVER INITIALIZATION
+
 def startServer():
     mainUDPSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     mainUDPSocket.bind(('', int(serverCfg.UDP)))
@@ -281,9 +213,9 @@ def startServer():
     mainTCPSocket.bind(('', int(serverCfg.TCP)))
 
     mainUDPThread = threading.Thread(target=handleUDPConnections, args=(mainUDPSocket,))
-    mainUDPThread.setDaemon(True)
+    mainUDPThread.daemon = True
     mainTCPThread = threading.Thread(target=handleTCPConnections, args=(mainTCPSocket,))
-    mainTCPThread.setDaemon(True)
+    mainTCPThread.daemon = True
 
     serverCfg.mainUDP = mainUDPSocket
     serverCfg.mainTCP = mainTCPSocket
@@ -292,6 +224,8 @@ def startServer():
     mainTCPThread.start()
     handleTerminalInput()
 
+
+#       UDP FUNCTIONS
 
 def handleUDPConnections(mainUDPSocket: socket.socket):  # HANDLING UDP CONNECTIONS AND THREAD EVERY NEW CONNECTION.
     while 1:
@@ -325,50 +259,19 @@ def switcher(bytesPacket, ip, port, mainUDPSocket):
         client.setStatus(servermodule.DISCONNECTED)
 
 
-def handlePeriodicCommunication(ALIVE: UDP_PDU, mainUDPSocket: socket.socket, client: Client):
-    if ALIVE.incorrectALIVE(client):
-        debugMsg("Incorrect ALIVE packet received from " + client.Id)
-        sendALIVE_REJ(mainUDPSocket, client)
-        client.setStatus(servermodule.DISCONNECTED)
-        return
-
-    if client.firstALIVE and client.Status == servermodule.REGISTERED:
-        debugMsg("Correct first ALIVE packet received from client " + client.Id)
-        client.setStatus(servermodule.SEND_ALIVE)
-        client.firstALIVE = False
-    elif not client.firstALIVE and client.Status == servermodule.SEND_ALIVE:
-        debugMsg("Correct ALIVE packet received from client " + client.Id)
-    else:
-        debugMsg("Error packet type received: " + typeToString(
-            ALIVE.Type) + " with client " + client.Id + " in status " + statusToString(
-            client.Status))
-        return
-
-    client.ALIVEReceived = True
-    sendALIVE(mainUDPSocket, client)
+def packUDP(packet: UDP_PDU):
+    packedPacket = struct.pack("B 11s 11s 61s", packet.Type, str(packet.Id_Trans).encode(),
+                               str(packet.Id_Comm).encode(), str(packet.Data).encode())
+    return packedPacket
 
 
-def ALIVETimer(client: Client):
-    if client.firstALIVE:
-        time.sleep(W)
-        if not client.ALIVEReceived and client.Status == servermodule.REGISTERED:
-            debugMsg("First ALIVE packet not received from client " + client.Id)
-            client.setStatus(servermodule.DISCONNECTED)
-            return
-
-    while client.ALIVEsLost < 3 and client.Status == servermodule.SEND_ALIVE:
-        if client.ALIVETimer.getName() != threading.current_thread().getName():
-            debugMsg("Thread ALIVE timer with name " + threading.current_thread().getName() + "exited")
-            return
-        time.sleep(V)
-        if client.ALIVEReceived:
-            client.ALIVEReceived = False
-            client.ALIVEsLost = 0
-        elif not client.ALIVEReceived:
-            client.ALIVEsLost += 1
-            debugMsg("Total lost ALIVEs: " + str(client.ALIVEsLost))
-    if client.ALIVEsLost == 3:
-        client.setStatus(servermodule.DISCONNECTED)
+def unpackUDP(bytesReceived: bytes):
+    unpackedPacket = struct.unpack('B 11s 11s 61s', bytesReceived)
+    packetType = unpackedPacket[0]
+    packetId_Trans = unpackedPacket[1].split(b"\x00")[0].decode()
+    packetId_Comm = unpackedPacket[2].split(b"\x00")[0].decode()
+    packetData = unpackedPacket[3].split(b"\x00")[0].decode()
+    return UDP_PDU(packetType, packetId_Trans, packetId_Comm, packetData)
 
 
 def handleRegisterRequest(REG_REQPacket, mainUDPSocket, client: Client):
@@ -447,7 +350,85 @@ def handleRegisterRequest(REG_REQPacket, mainUDPSocket, client: Client):
     clientALIVETimer.start()
     debugMsg("Started new ALIVE timer for client " + client.Id + " with name " + clientALIVETimer.getName())
     clientUDPSocket.close()
+
+
+def sendREG_ACK(socketToSend, client: Client):
+    REG_ACKPacket = UDP_PDU(servermodule.REG_ACK, serverCfg.Id, client.Id_Comm, str(client.newUDPort))
+    REG_ACKPacket.send(socketToSend, client, client.defaultUDPort)
+
+
+def sendINFO_ACK(socketToSend, client):
+    INFO_ACKPacket = UDP_PDU(servermodule.INFO_ACK, serverCfg.Id, client.Id_Comm, str(serverCfg.TCP))
+    INFO_ACKPacket.send(socketToSend, client, client.defaultUDPort)
+
+
+def sendINFO_NACK(socketToSend, client, reason):
+    INFO_NACKPacket = UDP_PDU(servermodule.INFO_NACK, serverCfg.Id, client.Id_Comm, reason)
+    INFO_NACKPacket.send(socketToSend, client, client.defaultUDPort)
+
     #   END OF REGISTER PROCESS
+
+
+def storeREG_INFOData(data, client: Client):
+    client.TCP = data.split(",")[0]
+    for i in range(len(data.split(";"))):
+        element = Element(data.split(",")[1].split(";")[i], "")
+        client.Elements.append(element)
+
+
+def sendREG_REJ(socketToSend, ip, port, reason):
+    REG_REJPacket = UDP_PDU(servermodule.REG_REJ, serverCfg.Id, "0000000000", reason)
+    REG_REJPacked = packUDP(REG_REJPacket)
+    bytesSent = socketToSend.sendto(REG_REJPacked, (ip, port))
+    while bytesSent != UDPPacketSize:
+        bytesSent += socketToSend.sendto(REG_REJPacked[bytesSent:], (ip, port))
+    debugMsg("Packet REG_REJ sent correctly to " + str(ip) + ":" + str(port))
+
+
+def handlePeriodicCommunication(ALIVE: UDP_PDU, mainUDPSocket: socket.socket, client: Client):
+    if ALIVE.incorrectALIVE(client):
+        debugMsg("Incorrect ALIVE packet received from " + client.Id)
+        sendALIVE_REJ(mainUDPSocket, client)
+        client.setStatus(servermodule.DISCONNECTED)
+        return
+
+    if client.firstALIVE and client.Status == servermodule.REGISTERED:
+        debugMsg("Correct first ALIVE packet received from client " + client.Id)
+        client.setStatus(servermodule.SEND_ALIVE)
+        client.firstALIVE = False
+    elif not client.firstALIVE and client.Status == servermodule.SEND_ALIVE:
+        debugMsg("Correct ALIVE packet received from client " + client.Id)
+    else:
+        debugMsg("Error packet type received: " + typeToString(
+            ALIVE.Type) + " with client " + client.Id + " in status " + statusToString(
+            client.Status))
+        return
+
+    client.ALIVEReceived = True
+    sendALIVE(mainUDPSocket, client)
+
+
+def ALIVETimer(client: Client):
+    if client.firstALIVE:
+        time.sleep(W)
+        if not client.ALIVEReceived and client.Status == servermodule.REGISTERED:
+            debugMsg("First ALIVE packet not received from client " + client.Id)
+            client.setStatus(servermodule.DISCONNECTED)
+            return
+
+    while client.ALIVEsLost < 3 and client.Status == servermodule.SEND_ALIVE:
+        if client.ALIVETimer.name != threading.current_thread().name:
+            debugMsg("Thread ALIVE timer with name " + threading.current_thread().getName() + " exited")
+            return
+        time.sleep(V)
+        if client.ALIVEReceived:
+            client.ALIVEReceived = False
+            client.ALIVEsLost = 0
+        elif not client.ALIVEReceived:
+            client.ALIVEsLost += 1
+            debugMsg("Total lost ALIVEs: " + str(client.ALIVEsLost))
+    if client.ALIVEsLost == 3:
+        client.setStatus(servermodule.DISCONNECTED)
 
 
 def sendALIVE(socketToSend, client: Client):
@@ -460,66 +441,7 @@ def sendALIVE_REJ(socketToSend, client: Client):
     ALIVE_REJPacket.send(socketToSend, client, client.defaultUDPort)
 
 
-def storeREG_INFOData(data, client: Client):
-    client.TCP = data.split(",")[0]
-    for i in range(len(data.split(";"))):
-        element = Element(data.split(",")[1].split(";")[i], "")
-        client.Elements.append(element)
-
-
-def sendINFO_ACK(socketToSend, client):
-    INFO_ACKPacket = UDP_PDU(servermodule.INFO_ACK, serverCfg.Id, client.Id_Comm, str(serverCfg.TCP))
-    INFO_ACKPacket.send(socketToSend, client, client.defaultUDPort)
-
-
-def sendINFO_NACK(socketToSend, client, reason):
-    INFO_NACKPacket = UDP_PDU(servermodule.INFO_NACK, serverCfg.Id, client.Id_Comm, reason)
-    INFO_NACKPacket.send(socketToSend, client, client.defaultUDPort)
-
-
-def sendREG_ACK(socketToSend, client: Client):
-    REG_ACKPacket = UDP_PDU(servermodule.REG_ACK, serverCfg.Id, client.Id_Comm, str(client.newUDPort))
-    REG_ACKPacket.send(socketToSend, client, client.defaultUDPort)
-
-
-def searchClient(clientId):
-    for i in range(len(clients)):
-        if clients[i].Id == clientId:
-            return clients[i]
-    return None
-
-
-def packetFromAuthedUser(packet):
-    userToSearch = packet.Id_Trans
-    for i in range(len(clients)):
-        if clients[i].Id == userToSearch:
-            return True
-    return False
-
-
-def sendREG_REJ(socketToSend, ip, port, reason):
-    REG_REJPacket = UDP_PDU(servermodule.REG_REJ, serverCfg.Id, "0000000000", reason)
-    REG_REJPacked = packUDP(REG_REJPacket)
-    bytesSent = socketToSend.sendto(REG_REJPacked, (ip, port))
-    while bytesSent != UDPPacketSize:
-        bytesSent += socketToSend.sendto(REG_REJPacked[bytesSent:], (ip, port))
-    debugMsg("Packet REG_REJ sent correctly to " + str(ip) + ":" + str(port))
-
-
-def packUDP(packet: UDP_PDU):
-    packedPacket = struct.pack("B 11s 11s 61s", packet.Type, str(packet.Id_Trans).encode(),
-                               str(packet.Id_Comm).encode(), str(packet.Data).encode())
-    return packedPacket
-
-
-def unpackUDP(bytesReceived: bytes):
-    unpackedPacket = struct.unpack('B 11s 11s 61s', bytesReceived)
-    packetType = unpackedPacket[0]
-    packetId_Trans = unpackedPacket[1].split(b"\x00")[0].decode()
-    packetId_Comm = unpackedPacket[2].split(b"\x00")[0].decode()
-    packetData = unpackedPacket[3].split(b"\x00")[0].decode()
-    return UDP_PDU(packetType, packetId_Trans, packetId_Comm, packetData)
-
+#       TCP FUNCTIONS
 
 def handleTCPConnections(mainTCPSocket: socket.socket):
     while 1:
@@ -531,7 +453,6 @@ def handleTCPConnections(mainTCPSocket: socket.socket):
 
 
 def handleTCPConnection(clientSocket: socket.socket, ip, port):
-
     inputs, outputs, excepts = select.select([clientSocket], [], [], M)
     if len(inputs) == 0:
         debugMsg("Packet not received from " + str(ip) + ":" + str(port) + " via TCP")
@@ -591,12 +512,6 @@ def handleTCPConnection(clientSocket: socket.socket, ip, port):
     debugMsg("Ended thread for attending TCP requests from port " + str(port))
 
 
-def sendDATA_REJ(DATA_REJPacket, socketToSend, ip, port):
-    DATA_REJPacked = packTCP(DATA_REJPacket)
-    socketToSend.sendall(DATA_REJPacked)
-    debugMsg("Packet DATA_REJ sent correctly to " + str(ip) + ":" + str(port))
-
-
 def unpackTCP(bytesReceived: bytes):
     unpackedPacket = struct.unpack('B 11s 11s 8s 16s 80s', bytesReceived)
     packetType = unpackedPacket[0]
@@ -614,6 +529,14 @@ def packTCP(packet: TCP_PDU):
                                str(packet.Value).encode(), str(packet.Info).encode())
     return packedPacket
 
+
+def sendDATA_REJ(DATA_REJPacket, socketToSend, ip, port):
+    DATA_REJPacked = packTCP(DATA_REJPacket)
+    socketToSend.sendall(DATA_REJPacked)
+    debugMsg("Packet DATA_REJ sent correctly to " + str(ip) + ":" + str(port))
+
+
+#       CONSOLE HANDLING FUNCTIONS
 
 def handleTerminalInput():  # USER TERMINAL INPUT
     while 1:
@@ -823,6 +746,102 @@ def listCommand():
             print(actualClient.Elements[k].Id, end=" ")
         print("")
 
+
+#       AUXILIARY FUNCTIONS
+
+def statusToString(status):
+    if status == servermodule.DISCONNECTED:
+        return "DISCONNECTED"
+    elif status == servermodule.WAIT_INFO:
+        return "WAIT_INFO"
+    elif status == servermodule.REGISTERED:
+        return "REGISTERED"
+    elif status == servermodule.NOT_REGISTERED:
+        return "NOT_REGISTERED"
+    elif status == servermodule.WAIT_ACK_REG:
+        return "WAIT_ACK_REG"
+    elif status == servermodule.WAIT_ACK_INFO:
+        return "WAIT_ACK_INFO"
+    elif status == servermodule.SEND_ALIVE:
+        return "SEND_ALIVE"
+    else:
+        return "Unknown status"
+
+
+def typeToString(packetType):
+    if packetType == servermodule.REG_REQ:
+        return "REG_REQ"
+    elif packetType == servermodule.REG_ACK:
+        return "REG_ACK"
+    elif packetType == servermodule.REG_NACK:
+        return "REG_NACK"
+    elif packetType == servermodule.REG_REJ:
+        return "REG_REJ"
+    elif packetType == servermodule.REG_INFO:
+        return "REG_INFO"
+    elif packetType == servermodule.INFO_ACK:
+        return "INFO_ACK"
+    elif packetType == servermodule.INFO_NACK:
+        return "INFO_NACK"
+    elif packetType == servermodule.INFO_REJ:
+        return "INFO_REJ"
+    elif packetType == servermodule.ALIVE:
+        return "ALIVE"
+    elif packetType == servermodule.ALIVE_NACK:
+        return "ALIVE_NACK"
+    elif packetType == servermodule.ALIVE_REJ:
+        return "ALIVE_REJ"
+    elif packetType == servermodule.SEND_DATA:
+        return "SEND_DATA"
+    elif packetType == servermodule.DATA_ACK:
+        return "DATA_ACK"
+    elif packetType == servermodule.DATA_NACK:
+        return "DATA_NACK"
+    elif packetType == servermodule.DATA_REJ:
+        return "DATA_REJ"
+    elif packetType == servermodule.SET_DATA:
+        return "SET_DATA"
+    elif packetType == servermodule.GET_DATA:
+        return "GET_DATA"
+    else:
+        return "Unknown packet type"
+
+
+def searchClient(clientId):
+    for i in range(len(clients)):
+        if clients[i].Id == clientId:
+            return clients[i]
+    return None
+
+
+def packetFromAuthedUser(packet):
+    userToSearch = packet.Id_Trans
+    for i in range(len(clients)):
+        if clients[i].Id == userToSearch:
+            return True
+    return False
+
+
+#       FORMATTING FUNCTIONS
+
+def errorMsg(text):
+    print(Colors.FAIL + "[ERROR] =>\t" + text + Colors.END)
+
+
+def okMsg(text):
+    print(Colors.GREEN + "[OK] =>\t" + text + Colors.END)
+
+
+def infoMsg(text):
+    print("[INFO] =>\t" + Colors.UNDERLINE + Colors.HEADER + text + Colors.END)
+
+
+def debugMsg(text):
+    if debug_mode:
+        print(Colors.BLUE + "[DEBUG] =>\t" + text + Colors.END)
+
+
+#       MAIN FUNCTION
 
 if __name__ == "__main__":
     try:
