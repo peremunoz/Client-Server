@@ -349,7 +349,7 @@ def handleRegisterRequest(REG_REQPacket, mainUDPSocket, client: Client):
     clientALIVETimer = threading.Thread(target=ALIVETimer, args=(client,))
     client.ALIVETimer = clientALIVETimer
     clientALIVETimer.start()
-    debugMsg("Started new ALIVE timer for client " + client.Id + " with name " + clientALIVETimer.getName())
+    debugMsg("Started new ALIVE timer for client " + client.Id + " with name " + clientALIVETimer.name)
     clientUDPSocket.close()
 
 
@@ -419,7 +419,7 @@ def ALIVETimer(client: Client):
 
     while client.ALIVEsLost < S and client.Status == servermodule.SEND_ALIVE:
         if client.ALIVETimer.name != threading.current_thread().name:
-            debugMsg("Thread ALIVE timer with name " + threading.current_thread().getName() + " exited")
+            debugMsg("Thread ALIVE timer with name " + threading.current_thread().name + " exited")
             return
         time.sleep(V)
         if client.ALIVEReceived:
