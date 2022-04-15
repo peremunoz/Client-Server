@@ -125,6 +125,7 @@ W = 3
 X = 3
 M = 3
 V = 2
+S = 3
 
 #   Global variables
 serverCfg = ServerCfg
@@ -416,7 +417,7 @@ def ALIVETimer(client: Client):
             client.setStatus(servermodule.DISCONNECTED)
             return
 
-    while client.ALIVEsLost < 3 and client.Status == servermodule.SEND_ALIVE:
+    while client.ALIVEsLost < S and client.Status == servermodule.SEND_ALIVE:
         if client.ALIVETimer.name != threading.current_thread().name:
             debugMsg("Thread ALIVE timer with name " + threading.current_thread().getName() + " exited")
             return
