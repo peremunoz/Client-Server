@@ -65,7 +65,7 @@ class Client:
     defaultUDPort: int = 0
     firstALIVE: bool = True
     ALIVEReceived: bool = False
-    ALIVEsLost: int = 0
+    ALIVELost: int = 0
     ALIVETimer: threading.Thread = None
     newUDPort: int = 0
     TCP: int = 0
@@ -78,7 +78,7 @@ class Client:
     def resetALIVE(self):
         self.firstALIVE = True
         self.ALIVEReceived = False
-        self.ALIVEsLost = 0
+        self.ALIVELost = 0
 
 
 @dataclass
@@ -417,18 +417,18 @@ def ALIVETimer(client: Client):
             client.setStatus(servermodule.DISCONNECTED)
             return
 
-    while client.ALIVEsLost < S and client.Status == servermodule.SEND_ALIVE:
+    while client.ALIVELost < S and client.Status == servermodule.SEND_ALIVE:
         if client.ALIVETimer.name != threading.current_thread().name:
             debugMsg("Thread ALIVE timer with name " + threading.current_thread().name + " exited")
             return
         time.sleep(V)
         if client.ALIVEReceived:
             client.ALIVEReceived = False
-            client.ALIVEsLost = 0
+            client.ALIVELost = 0
         elif not client.ALIVEReceived:
-            client.ALIVEsLost += 1
-            debugMsg("Total lost ALIVEs: " + str(client.ALIVEsLost))
-    if client.ALIVEsLost == 3:
+            client.ALIVELost += 1
+            debugMsg("Total ALIVE lost: " + str(client.ALIVELost))
+    if client.ALIVELost == 3:
         client.setStatus(servermodule.DISCONNECTED)
 
 

@@ -48,7 +48,7 @@ void setupServAddrUDP();
 //      Periodic communication functions
 void periodicCommunication();
 void createThreads();
-void* sendALIVEs();
+void* sendALIVE();
 void* receiveALIVE();
 //      Terminal handling functions
 void* handleTerminalInput();
@@ -104,7 +104,7 @@ pthread_t terminalThread = (pthread_t) NULL;
 pthread_t receiveAliveThread = (pthread_t) NULL;
 pthread_t sendAliveThread = (pthread_t) NULL;
 pid_t mainProcess;
-int ALIVEsLost = 0;
+int ALIVELost = 0;
 
 //  Client data struct
 struct Client_Data {
@@ -624,15 +624,15 @@ void createThreads() {
         openTCP1Socket();
     }
     pthread_create(&terminalThread, NULL, &handleTerminalInput, NULL);
-    pthread_create(&sendAliveThread, NULL, &sendALIVEs, NULL);
+    pthread_create(&sendAliveThread, NULL, &sendALIVE, NULL);
     handleTCPConnections();
 }
 
 //  Does the periodic sending of ALIVE packets
-void* sendALIVEs() {
-    ALIVEsLost = 0;
+void* sendALIVE() {
+    ALIVELost = 0;
     UDP ALIVEPacket = buildALIVEPacket();
-    while(ALIVEsLost < S) {
+    while(ALIVELost < S) {
         sleep(V);
         if (sendto(udpSock, &ALIVEPacket, sizeof(UDP), 0,
                    (const struct sockaddr *) &serverAddrUDP, sizeof(serverAddrUDP)) < 0) {
@@ -642,7 +642,7 @@ void* sendALIVEs() {
         }
         if (debug_mode) {
             debugMsg();
-            printf("UDP packet type %s sent correctly. ALIVE pending responses: %i\n" resetColor, getTypeOfPacketUDP(ALIVEPacket), ALIVEsLost);
+            printf("UDP packet type %s sent correctly. ALIVE pending responses: %i\n" resetColor, getTypeOfPacketUDP(ALIVEPacket), ALIVELost);
         }
         pthread_create(&receiveAliveThread, NULL, &receiveALIVE, NULL);
     }
@@ -654,7 +654,7 @@ void* sendALIVEs() {
 
 //  It checks the ALIVE response
 void* receiveALIVE() {
-    ALIVEsLost++;
+    ALIVELost++;
     struct timeval t;
     fd_set read_fds;
     FD_ZERO(&read_fds);
@@ -669,7 +669,7 @@ void* receiveALIVE() {
             kill(mainProcess, SIGUSR1);
             return NULL;
         }
-        ALIVEsLost = 0;
+        ALIVELost = 0;
     }
     return NULL;
 }
