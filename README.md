@@ -1,7 +1,10 @@
-# Server Client Software
+# Client - Server 🖥️💻
 
-Implementation of a Client-Server architecture.
+## Implementation of a Client-Server architecture.
 Communication via sockets and using TCP and UDP protocols.
 
-Client: Coded in ANSI C.
-Server: Coded in Python.
+Client coded in ANSI C. Server coded in Python.
+
+# How to use it ❓
+
+## 1. Config files ⚙️
